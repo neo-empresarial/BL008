@@ -10,17 +10,17 @@ describes the feature as it currently behaves, not how it was built.
 A read-only Streamlit MVP that compares real on-chain basket rebalancing
 across three platforms — Glider, Reserve Protocol, QuantAMM/Balancer — side
 by side, lets the user re-simulate performance under different asset
-weights, and overlays the real performance of multiple example strategies
-across platforms. Invariants:
+weights against a static HODL baseline, and overlays the real performance
+of multiple example strategies across platforms. Invariants:
 
 - Each platform is accessed through an **adapter** (`adapters/glider.py`,
   `adapters/reserve.py`, `adapters/quantamm.py`) that implements the exact
   same function signatures, so `app.py` never branches on platform beyond
   picking which adapter module to call.
 - The app never invents data. Any value it can't obtain from a source (a
-  missing TVL, a missing historical price, a missing rebalance) is either
-  omitted, shown as `—`, or raised as a readable error — never estimated or
-  faked.
+  missing TVL, a missing historical price, a missing rebalance, a missing
+  token symbol) is either omitted, shown as a safe fallback, or raised as a
+  readable error — never estimated or guessed.
 - The underlying assets and REAL performance curves are **not** comparable
   across platforms (different asset classes, different weight semantics).
   The one metric that is comparable is who decides a rebalance and how
@@ -31,31 +31,39 @@ across platforms. Invariants:
 ## Surface
 
 `app.py` is the entrypoint (`streamlit run app.py`), single page, no
-routing, no tabs. Its behavior is driven entirely by sidebar selections.
+routing, no tabs, **no side-by-side columns for the main flow** — every
+section stacks vertically so the page scrolls naturally and the
+performance chart gets full page width.
 
 - **Sidebar** — platform picker, basket picker (example dropdown or manual
   `basket_id`), and a compact multi-select to pick strategies for the
   comparison overlay (`<Platform> / <example label>` options built from
   every adapter's `EXAMPLE_BASKETS`).
 - **Header** — compact console header (platform badge, basket id).
-- **Chart mode toggle** — `st.radio`, "Indexed value" (default) or "Percent
-  return", shared by both the active-strategy performance chart and the
-  comparison overlay chart.
-- **Primary workspace** — two columns: allocation editor on the left
-  (sliders, donut chart, table), live performance chart (real vs.
-  simulated) on the right. Both react to the same selections without a
-  page reload.
-- **Strategy comparison** — below the workspace; renders only when the
-  sidebar multi-select has at least one entry.
+- **Allocation** — full-width section: methodology expander, reset button,
+  one row per asset (label, current %, slider), donut chart, table.
+- **Performance** — full-width section. Its subheader and the chart-mode
+  control (`st.segmented_control` when the installed Streamlit has it,
+  else `st.radio(horizontal=True)`) share one row via `st.columns`, so the
+  toggle visually belongs to this chart rather than sitting disconnected at
+  the top of the page. A "How to read this chart" expander sits right
+  below, explaining the three series (see Rules and behavior). The chart
+  itself follows.
+- **Strategy comparison** — below Performance; renders only when the
+  sidebar multi-select has at least one entry; reuses the same chart-mode
+  value.
 - **Secondary sections** — `st.expander("Rebalance history")` and
   `st.expander("Protocol details")` (who decides + rebalance frequency),
-  collapsed by default, below the comparison section.
+  collapsed by default, at the bottom of the page.
 
 `.streamlit/config.toml` sets the base dark theme (sans-serif, minimal
-palette); `ui/theme.py` layers app-level CSS (header, badges, rounded
-card-like chart/table surfaces, address/link styling) and a shared Plotly
-layout/colorway applied to every chart via `theme.apply_chart_theme`.
-Neither file touches data or adapter logic.
+palette); `ui/theme.py` layers app-level CSS — extra top padding so the
+header isn't clipped under Streamlit's toolbar, rounded card-like
+chart/table surfaces with `overflow: hidden` so the rounding actually
+clips the chart's own background, address/link styling — and a shared
+Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of 420px) applied
+to every chart via `theme.apply_chart_theme`. Neither file touches data or
+adapter logic.
 
 ### Adapter interface (implemented identically by all three adapters)
 
@@ -74,7 +82,7 @@ Each adapter module also exports:
 
 Glider additionally exposes `discover_strategies(collection="curated", sort=None, limit=50) -> list[dict]` (used only for TVL/wallet-count lookup, not for the basket selector) and the lower-level `get_target_allocation` / `get_version_history` that `get_current_allocation` / `get_rebalance_history` wrap.
 
-`adapters/pricing.py` exposes `get_price_history(price_ref, days=180) -> list[{"timestamp": int, "price": float}]`, `caip19_to_price_ref(asset_id) -> str | None`, and `price_ref_to_explorer_url(price_ref) -> str | None` — all shared by the three adapters and/or by `app.py`.
+`adapters/pricing.py` exposes `get_price_history(price_ref, days=180) -> list[{"timestamp": int, "price": float}]`, `caip19_to_price_ref(asset_id) -> str | None`, `price_ref_to_explorer_url(price_ref) -> str | None`, and `resolve_token_symbol(price_ref) -> str | None` — all shared by the three adapters and/or by `app.py`.
 
 ### `basket_id` format per platform
 
@@ -94,7 +102,7 @@ metadata:
     "asset": "WETH",              # stable identifier — never changes meaning
     "weight_pct": 42.5,           # 0-100 float, see below
     "price_ref": "ethereum:0x...",       # or None
-    "display_asset": "WETH",             # human-readable label; falls back to `asset`-equivalent text
+    "display_asset": "WETH",             # human-readable label; falls back to a truncated address
     "token_address": "0x...",            # or None
     "chain": "ethereum",                 # DefiLlama chain slug, or None
     "explorer_url": "https://etherscan.io/token/0x...",  # or None
@@ -106,12 +114,18 @@ lookups, simulation matching) keys off — it never changes shape for
 backward compatibility. `display_asset`/`token_address`/`chain`/
 `explorer_url` are presentation-only and may be `None`; UI code prefers
 `display_asset` when present and falls back to `asset` otherwise (see
-`app.py`'s `_label_markup`). For Glider, `asset` is the raw CAIP-19
-assetId (used as the simulation/session-state key) while `display_asset`
-is a truncated address (`0x1234…abcd`) because the Glider API doesn't
-return a token symbol; for Reserve and QuantAMM, `asset` and
-`display_asset` are the same value (the token symbol, or the raw address
-when no symbol is available).
+`app.py`'s `_label_markup`, and its `display_labels` lookup used for the
+donut chart, table, and the excluded-assets caption — every visible label
+in the app goes through one of these, never the raw `asset` value).
+
+For Glider, `asset` is the raw CAIP-19 assetId (used as the
+simulation/session-state key). `display_asset` there resolves in two
+steps: `pricing.resolve_token_symbol(price_ref)` first (a DefiLlama
+current-price lookup — see Rules and behavior), and only when that returns
+nothing does it fall back to a truncated address (`0x1234…abcd`) — never a
+guessed name. For Reserve and QuantAMM, `asset` and `display_asset` are
+the same value (the token symbol already returned by their own APIs, or
+the raw address when no symbol is available there).
 
 `weight_pct` is always a **0–100 float**, already normalized per basket by
 the adapter (never a 0–1 fraction, even though some upstream APIs use one —
@@ -130,12 +144,21 @@ string; for Reserve and QuantAMM it always carries a UTC offset, for Glider
 it's whatever the API returns as-is.
 
 Simulated performance points (built by `app.py`'s
-`simulate_weighted_performance`) use the same `{"date", "percent_change"}`
-shape so both series can be concatenated into one chart. `app.py`'s
-`to_display_series` then derives a `display_value` column from
-`percent_change` depending on the active chart mode: `100 + percent_change`
-for "Indexed value" (base 100 at each series' own first point), or
-`percent_change` unchanged for "Percent return".
+`simulate_weighted_performance`, used for both the HODL and Adjusted
+series) use the same `{"date", "percent_change"}` shape so every series can
+be concatenated into one chart. `app.py`'s `to_display_series` then derives
+a `display_value` column from `percent_change` depending on the active
+chart mode (`CHART_MODES`):
+
+| Mode | `display_value` formula |
+|---|---|
+| "Indexed value" (default) | `100 + percent_change` |
+| "Percent return" | `percent_change` unchanged |
+| "Growth of $10k" | `10000 * (1 + percent_change / 100)` |
+
+`chart_mode_axis_label(chart_mode)` returns the matching y-axis label,
+shared by both the Performance chart and the comparison overlay so they
+never drift out of sync with each other.
 
 ## Rules and behavior
 
@@ -161,19 +184,51 @@ already-rebalanced values — there is no separate "raw sum → normalize"
 step or caption; the total is 100% by construction after every edit and
 after "Reset to real weights".
 
-**Weighted simulation.** For each asset with a `price_ref`, its full daily
-price history (`SIMULATION_DAYS` = 180 days) is fetched, forward/backward
-filled to align dates across assets, and normalized so day 0 = 1.0. The
-simulated index is the weight-averaged sum of the normalized series, using
-weights renormalized **only across the included assets** (i.e. an asset
-with no price data doesn't just get a 0 weight — its weight is redistributed
-to the rest). If zero assets have a usable price, simulation is skipped
-entirely (no chart series is added, only a caption explaining why).
+**Glider token symbol resolution.** `adapters/glider.py`'s `_display_asset`
+calls `pricing.resolve_token_symbol(price_ref)`, which hits DefiLlama's
+`coins.llama.fi/prices/current/{price_ref}` endpoint (the same provider
+family as `get_price_history`, so no new external dependency is
+introduced) and reads the `symbol` field of the response. This runs once
+per asset per `get_current_allocation` call — itself wrapped by `app.py`'s
+`st.cache_data(ttl=300)`, so it isn't repeated on every rerun. Any failure
+(network error, non-2xx, missing symbol) returns `None` and the adapter
+falls back to a truncated address; it never fabricates a symbol.
 
-**Chart mode.** The `st.radio` toggle ("Indexed value" default, "Percent
-return") drives both the active-strategy performance chart and the
-comparison overlay — both call the same `to_display_series` helper and
-share one `chart_mode` value, so switching the toggle updates both charts
+**Weighted simulation (shared by HODL and Adjusted).** For each asset with
+a `price_ref`, its full daily price history (`SIMULATION_DAYS` = 180 days)
+is fetched, forward/backward filled to align dates across assets, and
+normalized so day 0 = 1.0. The simulated index is the weight-averaged sum
+of the normalized series, using weights renormalized **only across the
+included assets** (i.e. an asset with no price data doesn't just get a 0
+weight — its weight is redistributed to the rest). If zero assets have a
+usable price, simulation is skipped entirely for that series (no chart
+series is added; for Adjusted, a caption explains why — HODL fails silently
+since it's a secondary series).
+
+**Performance chart series.** Up to three series are plotted together,
+built independently and only added when data is available:
+
+| Series constant | Source | Reacts to sliders? |
+|---|---|---|
+| `SERIES_REAL` = "Real strategy (with rebalancing)" | `get_performance` — the platform's own method/source | No — platform data |
+| `SERIES_HODL` = "HODL (real weights, no rebalancing)" | `simulate_weighted_performance` over `real_weights` (the basket's actual current weights, from `get_current_allocation`) | No — always the real weights |
+| `SERIES_ADJUSTED` = "Adjusted buy-and-hold (your weights)" | `simulate_weighted_performance` over `edited_weights` (the committed slider weights) | Yes |
+
+With the sliders at their real/reset values, HODL and Adjusted use the
+same weights and should track closely (not necessarily identically — HODL
+and Adjusted are computed independently, and each can silently exclude a
+different asset only if their weight sets differ, which they don't at
+reset — in practice they match). Real can differ from both even then,
+because Real reflects whatever rebalancing the platform actually performed
+over time, while HODL/Adjusted assume the weights were fixed for the whole
+`SIMULATION_DAYS` window. The "How to read this chart" expander above the
+chart states this in user-facing language.
+
+**Chart mode.** `CHART_MODES = ["Indexed value", "Percent return", "Growth
+of $10k"]`. The control (`st.segmented_control` or `st.radio` fallback,
+see Surface) drives both the Performance chart and the comparison overlay
+— both call the same `to_display_series`/`chart_mode_axis_label` helpers
+and share one `chart_mode` value, so switching it updates both charts
 identically.
 
 **TVL display.**
@@ -225,12 +280,16 @@ comparison entry) never takes down the rest of the page.
 - No free-exploration UI for Glider's `discover_strategies` — the function
   exists and is used internally for TVL lookup, but there's no dropdown to
   browse the full curated collection.
-- No real token symbol lookup for Glider — `display_asset` there is a
-  truncated address, not a fetched/guessed symbol; the adapter never
-  invents a name it wasn't given.
+- No invented token symbols anywhere — Glider's `display_asset` either
+  comes from a real DefiLlama lookup or falls back to a truncated address;
+  it never guesses a name from context.
 - No date alignment across comparison-overlay series — each strategy's
   points are plotted on its own native date range; overlapping ranges are
   a coincidence of the underlying data, not something the app enforces.
+- No true historical "what the basket actually held on day X" for HODL —
+  it assumes the *current* real weights held constant for the whole
+  simulation window, not the weights that were actually in place on each
+  past date.
 - Historical price gaps are filled (`ffill`/`bfill`) for chart continuity,
   but no price is ever fabricated for an asset that has zero price history
   — that asset is excluded from the simulation, not interpolated into it.
@@ -250,12 +309,15 @@ comparison entry) never takes down the rest of the page.
   naturally finds 0 changed assets, short-circuiting straight to "use
   pending/real as-is".
 - **An asset can visibly have a real weight but never appear in the
-  simulated curve.** Symptom: donut/table show the asset, but it's absent
-  (and listed under "Excluded") from the "Simulated" performance line.
+  simulated curves.** Symptom: donut/table show the asset, but it's absent
+  (and, for Adjusted, listed under "Excluded") from HODL and/or Adjusted.
   Cause: `price_ref` is `None` (non-EVM asset, or chain outside
   `EIP155_TO_DEFILLAMA`/`CHAIN_TO_DEFILLAMA`) or DefiLlama has no price for
   that exact address. Fix: none from the UI — this is a data-availability
   limit, not a bug.
+- **HODL and Adjusted can look identical at reset — that's expected, not a
+  bug.** Both use the same real weights and the same simulation path at
+  that point; see Rules and behavior for why Real still differs.
 - **Reserve weights are by token quantity, not USD value.**
   `weight_pct` for Reserve is `weightSpotLimit` normalized by its own sum —
   it does **not** account for each token's price. Two DTFs holding the same
@@ -274,12 +336,14 @@ comparison entry) never takes down the rest of the page.
   without the key configured shows a contained `st.error` from
   `GliderAPIError` in each affected section (including any Glider entry
   picked for comparison, via a `st.warning` there instead); Reserve and
-  QuantAMM remain fully usable in the same session.
-- **The comparison overlay's "Indexed value" mode rebases each series to
-  its own first point, not to a shared start date.** Two overlaid series
-  with different history lengths will both start at 100 even though their
-  real calendar start dates differ — read the x-axis dates, not just the
-  visual alignment at the left edge.
+  QuantAMM remain fully usable in the same session. Token symbol
+  resolution for Glider doesn't need the key at all — it's a separate,
+  unauthenticated DefiLlama call.
+- **The comparison overlay's "Indexed value" and "Growth of $10k" modes
+  rebase each series to its own first point, not to a shared start date.**
+  Two overlaid series with different history lengths will both start at
+  100 (or $10,000) even though their real calendar start dates differ —
+  read the x-axis dates, not just the visual alignment at the left edge.
 
 ## Setup
 
