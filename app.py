@@ -418,7 +418,7 @@ if edited_weights:
         if excluded:
             st.caption(
                 "Excluded from the simulation for lack of historical price: "
-                + ", ".join(str(a) for a in excluded)
+                + ", ".join(display_labels.get(a, a) for a in excluded)
             )
     else:
         st.caption(
