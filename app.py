@@ -35,6 +35,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from adapters import glider, pricing, quantamm, reserve
+from ui import theme
 
 load_dotenv()
 
@@ -161,14 +162,10 @@ def simulate_weighted_performance(
 
 
 st.set_page_config(page_title="Rebalancing Simulator", layout="wide")
-st.title("Rebalancing Simulator — On-Chain Baskets")
-st.caption(
-    "MVP comparing real on-chain index strategy rebalancing "
-    "across Glider, Reserve Protocol and QuantAMM/Balancer."
-)
+theme.inject_css()
 
 with st.sidebar:
-    st.header("Configuration")
+    st.header("Control Panel")
     platform_name = st.selectbox("Platform", list(PLATFORMS.keys()))
     adapter = PLATFORMS[platform_name]
 
@@ -186,7 +183,7 @@ if not basket_id:
     st.warning("Choose an example or enter a basket_id in the sidebar.")
     st.stop()
 
-st.subheader(f"{platform_name} — `{basket_id}`")
+theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
 
 # tvlUsd only comes from Glider's discovery; Reserve and QuantAMM only have
 # aggregated TVL per protocol via DefiLlama (not per individual basket) —
@@ -215,164 +212,169 @@ else:
             f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
         )
 
+tab_allocation, tab_history, tab_performance, tab_protocol = st.tabs(
+    ["Allocation", "History", "Performance", "Protocol"]
+)
+
 # --- current target allocation, with concentration sliders -----------------
 
-st.markdown("### Current target allocation")
-allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
+with tab_allocation:
+    allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
 
-edited_weights: dict[str, float] = {}
-price_refs: dict[str, str | None] = {}
+    edited_weights: dict[str, float] = {}
+    price_refs: dict[str, str | None] = {}
 
-if allocation_error:
-    st.error(allocation_error)
-elif not allocation:
-    st.info("No allocation returned by the data source.")
-else:
-    price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
+    if allocation_error:
+        st.error(allocation_error)
+    elif not allocation:
+        st.info("No allocation returned by the data source.")
+    else:
+        price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
 
-    st.caption(
-        "Adjust each asset's concentration — the sliders start at the real "
-        "weights and are normalized to sum to 100%. The simulated "
-        "performance curve below uses these weights."
-    )
-
-    def _slider_key(asset: str) -> str:
-        return f"w::{platform_name}::{basket_id}::{asset}"
-
-    if st.button("Reset to real weights"):
-        for row in allocation:
-            st.session_state[_slider_key(row["asset"])] = round(row["weight_pct"], 1)
-
-    raw_weights: dict[str, float] = {}
-    slider_cols = st.columns(3)
-    for i, row in enumerate(allocation):
-        key = _slider_key(row["asset"])
-        if key not in st.session_state:
-            st.session_state[key] = round(row["weight_pct"], 1)
-        with slider_cols[i % 3]:
-            raw_weights[row["asset"]] = st.slider(
-                str(row["asset"]),
-                min_value=0.0,
-                max_value=100.0,
-                step=0.5,
-                key=key,
+        with st.expander("Methodology"):
+            st.caption(
+                "Adjust each asset's concentration — the sliders start at the real "
+                "weights and are normalized to sum to 100%. The simulated "
+                "performance curve on the Performance tab uses these weights."
             )
 
-    total_raw = sum(raw_weights.values())
-    st.caption(f"Raw sum of sliders: {total_raw:.1f}% → normalized to 100% below.")
-    if total_raw > 0:
-        edited_weights = {asset: (w / total_raw) * 100.0 for asset, w in raw_weights.items()}
-    else:
-        edited_weights = raw_weights  # all at zero — nothing to normalize
+        def _slider_key(asset: str) -> str:
+            return f"w::{platform_name}::{basket_id}::{asset}"
 
-    df_allocation = pd.DataFrame(
-        [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
-    )
-    chart_col, table_col = st.columns([2, 1])
-    with chart_col:
-        fig = px.pie(df_allocation, names="asset", values="weight_pct", title="Simulated weight per asset (%)")
-        st.plotly_chart(fig, use_container_width=True)
-    with table_col:
-        st.dataframe(
-            df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
-            use_container_width=True,
-            hide_index=True,
+        if st.button("Reset to real weights"):
+            for row in allocation:
+                st.session_state[_slider_key(row["asset"])] = round(row["weight_pct"], 1)
+
+        raw_weights: dict[str, float] = {}
+        slider_cols = st.columns(3)
+        for i, row in enumerate(allocation):
+            key = _slider_key(row["asset"])
+            if key not in st.session_state:
+                st.session_state[key] = round(row["weight_pct"], 1)
+            with slider_cols[i % 3]:
+                raw_weights[row["asset"]] = st.slider(
+                    str(row["asset"]),
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=0.5,
+                    key=key,
+                )
+
+        total_raw = sum(raw_weights.values())
+        st.caption(f"Raw sum of sliders: {total_raw:.1f}% → normalized to 100% below.")
+        if total_raw > 0:
+            edited_weights = {asset: (w / total_raw) * 100.0 for asset, w in raw_weights.items()}
+        else:
+            edited_weights = raw_weights  # all at zero — nothing to normalize
+
+        df_allocation = pd.DataFrame(
+            [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
         )
+        chart_col, table_col = st.columns([2, 1])
+        with chart_col:
+            fig = px.pie(df_allocation, names="asset", values="weight_pct", title="Simulated weight per asset (%)")
+            st.plotly_chart(fig, use_container_width=True)
+        with table_col:
+            st.dataframe(
+                df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 # --- rebalance history -------------------------------------------------
 
-st.markdown("### Rebalance history")
-history, history_error = safe_call(cached_get_rebalance_history, platform_name, basket_id)
+with tab_history:
+    history, history_error = safe_call(cached_get_rebalance_history, platform_name, basket_id)
 
-if history_error:
-    st.error(history_error)
-elif not history:
-    st.info("No rebalance event found.")
-else:
-    df_history = pd.DataFrame(
-        [
-            {
-                "Date": h["date"],
-                "What changed": h["description"],
-                "Nº of assets": len(h["weights_after"]) if h["weights_after"] else None,
-            }
-            for h in reversed(history)  # most recent first
-        ]
-    )
-    st.dataframe(df_history, use_container_width=True, hide_index=True)
+    if history_error:
+        st.error(history_error)
+    elif not history:
+        st.info("No rebalance event found.")
+    else:
+        df_history = pd.DataFrame(
+            [
+                {
+                    "Date": h["date"],
+                    "What changed": h["description"],
+                    "Nº of assets": len(h["weights_after"]) if h["weights_after"] else None,
+                }
+                for h in reversed(history)  # most recent first
+            ]
+        )
+        st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 # --- performance curve: real vs. simulated with adjusted weights -----------
 
-st.markdown("### Performance")
-performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
+with tab_performance:
+    performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
 
-perf_frames = []
+    perf_frames = []
 
-if performance_error:
-    st.error(performance_error)
-elif performance and performance.get("points"):
-    df_real = pd.DataFrame(performance["points"])
-    df_real["series"] = f"Real ({performance.get('method') or '?'})"
-    perf_frames.append(df_real)
-else:
-    st.info("No real performance data for this basket.")
-
-if edited_weights:
-    weighted_assets = [
-        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
-        for asset, weight in edited_weights.items()
-    ]
-    sim_points, excluded = simulate_weighted_performance(weighted_assets)
-    if sim_points:
-        df_sim = pd.DataFrame(sim_points)
-        df_sim["series"] = "Simulated (adjusted weights)"
-        perf_frames.append(df_sim)
-        if excluded:
-            st.caption(
-                "Excluded from the simulation for lack of historical price: "
-                + ", ".join(str(a) for a in excluded)
-            )
+    if performance_error:
+        st.error(performance_error)
+    elif performance and performance.get("points"):
+        df_real = pd.DataFrame(performance["points"])
+        df_real["series"] = f"Real ({performance.get('method') or '?'})"
+        perf_frames.append(df_real)
     else:
-        st.caption(
-            "Could not simulate performance with the adjusted weights — "
-            "none of this allocation's assets has historical price "
-            "available in the source used (DefiLlama)."
-        )
+        st.info("No real performance data for this basket.")
 
-if perf_frames:
-    df_perf_all = pd.concat(perf_frames, ignore_index=True)
-    fig_perf = px.line(
-        df_perf_all,
-        x="date",
-        y="percent_change",
-        color="series",
-        title="Accumulated return (%) — real vs. simulated",
-        labels={"date": "Date", "percent_change": "Accumulated return (%)"},
-    )
-    st.plotly_chart(fig_perf, use_container_width=True)
-    st.caption(
-        "'Real' uses the platform's native method/source (see adapter). "
-        "'Simulated' recombines each asset's historical price using the "
-        "weights adjusted above — it only matches 'Real' if the adjusted "
-        "weights equal the real ones."
-    )
+    if edited_weights:
+        weighted_assets = [
+            {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+            for asset, weight in edited_weights.items()
+        ]
+        sim_points, excluded = simulate_weighted_performance(weighted_assets)
+        if sim_points:
+            df_sim = pd.DataFrame(sim_points)
+            df_sim["series"] = "Simulated (adjusted weights)"
+            perf_frames.append(df_sim)
+            if excluded:
+                st.caption(
+                    "Excluded from the simulation for lack of historical price: "
+                    + ", ".join(str(a) for a in excluded)
+                )
+        else:
+            st.caption(
+                "Could not simulate performance with the adjusted weights — "
+                "none of this allocation's assets has historical price "
+                "available in the source used (DefiLlama)."
+            )
+
+    if perf_frames:
+        df_perf_all = pd.concat(perf_frames, ignore_index=True)
+        fig_perf = px.line(
+            df_perf_all,
+            x="date",
+            y="percent_change",
+            color="series",
+            title="Accumulated return (%) — real vs. simulated",
+            labels={"date": "Date", "percent_change": "Accumulated return (%)"},
+        )
+        st.plotly_chart(fig_perf, use_container_width=True)
+        st.caption(
+            "'Real' uses the platform's native method/source (see adapter). "
+            "'Simulated' recombines each asset's historical price using the "
+            "weights adjusted above — it only matches 'Real' if the adjusted "
+            "weights equal the real ones."
+        )
 
 # --- comparative card: who decides + rebalance frequency -------------------
 
-st.markdown("### Comparable across platforms: who decides and how often")
-st.caption(
-    "The underlying assets and price curve are NOT directly comparable "
-    "across platforms — this is."
-)
+with tab_protocol:
+    st.caption(
+        "The underlying assets and price curve are NOT directly comparable "
+        "across platforms — this is."
+    )
 
-col_decision, col_frequency = st.columns(2)
-with col_decision:
-    st.markdown(f"**Who decides ({platform_name})**")
-    st.write(adapter.DECISION_MAKER)
-with col_frequency:
-    st.markdown("**Rebalance frequency**")
-    if history:
-        freq = estimate_monthly_frequency(history)
-        st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
-    else:
-        st.write("No history available to estimate.")
+    col_decision, col_frequency = st.columns(2)
+    with col_decision:
+        st.markdown(f"**Who decides ({platform_name})**")
+        st.write(adapter.DECISION_MAKER)
+    with col_frequency:
+        st.markdown("**Rebalance frequency**")
+        if history:
+            freq = estimate_monthly_frequency(history)
+            st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
+        else:
+            st.write("No history available to estimate.")
