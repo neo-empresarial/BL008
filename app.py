@@ -234,44 +234,80 @@ with tab_allocation:
         with st.expander("Methodology"):
             st.caption(
                 "Adjust each asset's concentration — the sliders start at the real "
-                "weights and are normalized to sum to 100%. The simulated "
-                "performance curve on the Performance tab uses these weights."
+                "weights. Moving one asset proportionally rescales the others so "
+                "the total always stays at 100%. The simulated performance curve "
+                "below uses these weights."
             )
 
         def _slider_key(asset: str) -> str:
             return f"w::{platform_name}::{basket_id}::{asset}"
 
-        if st.button("Reset to real weights"):
-            for row in allocation:
-                st.session_state[_slider_key(row["asset"])] = round(row["weight_pct"], 1)
+        def _history_key() -> str:
+            return f"prev_w::{platform_name}::{basket_id}"
 
-        raw_weights: dict[str, float] = {}
+        real_weights = {row["asset"]: round(row["weight_pct"], 1) for row in allocation}
+        history_key = _history_key()
+        reset_clicked = st.button("Reset to real weights")
+
+        if reset_clicked or history_key not in st.session_state:
+            committed = dict(real_weights)
+        else:
+            prev_committed = st.session_state[history_key]
+            pending = {
+                asset: st.session_state.get(_slider_key(asset), prev_committed.get(asset, real))
+                for asset, real in real_weights.items()
+            }
+            changed = [
+                asset
+                for asset, value in pending.items()
+                if abs(value - prev_committed.get(asset, value)) > 1e-9
+            ]
+            if len(changed) == 1:
+                # Proportional rebalance: the dragged asset keeps its new
+                # value; every other asset is scaled to fill the remaining
+                # percentage, preserving their relative proportions — so the
+                # sum always stays at 100% without a separate normalization
+                # step (see docs/rebalancing-simulator.md).
+                changed_asset = changed[0]
+                new_value = max(0.0, min(100.0, pending[changed_asset]))
+                others = [a for a in pending if a != changed_asset]
+                remaining = 100.0 - new_value
+                prev_others_total = sum(prev_committed.get(a, 0.0) for a in others)
+                committed = {changed_asset: new_value}
+                if prev_others_total > 0:
+                    for a in others:
+                        committed[a] = prev_committed.get(a, 0.0) / prev_others_total * remaining
+                elif others:
+                    equal_share = remaining / len(others)
+                    for a in others:
+                        committed[a] = equal_share
+            else:
+                # 0 or 2+ diffs: basket/platform just switched, or nothing
+                # changed yet — use pending as-is rather than guessing intent.
+                committed = pending
+
+        for asset, weight in committed.items():
+            st.session_state[_slider_key(asset)] = weight
+        st.session_state[history_key] = dict(committed)
+
         for row in allocation:
             asset = row["asset"]
-            key = _slider_key(asset)
-            if key not in st.session_state:
-                st.session_state[key] = round(row["weight_pct"], 1)
             label_col, value_col, slider_col = st.columns([2, 1, 5])
             with label_col:
                 st.markdown(f"**{asset}**")
             with slider_col:
-                raw_weights[asset] = st.slider(
+                st.slider(
                     str(asset),
                     min_value=0.0,
                     max_value=100.0,
                     step=0.5,
-                    key=key,
+                    key=_slider_key(asset),
                     label_visibility="collapsed",
                 )
             with value_col:
-                st.markdown(f"`{raw_weights[asset]:.1f}%`")
+                st.markdown(f"`{committed[asset]:.1f}%`")
 
-        total_raw = sum(raw_weights.values())
-        st.caption(f"Raw sum of sliders: {total_raw:.1f}% → normalized to 100% below.")
-        if total_raw > 0:
-            edited_weights = {asset: (w / total_raw) * 100.0 for asset, w in raw_weights.items()}
-        else:
-            edited_weights = raw_weights  # all at zero — nothing to normalize
+        edited_weights = committed
 
         df_allocation = pd.DataFrame(
             [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
