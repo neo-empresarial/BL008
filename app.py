@@ -48,6 +48,13 @@ load_dotenv()
 CACHE_TTL_SECONDS = 300
 SIMULATION_DAYS = 180
 
+# Chart series names — deliberately explicit about what each one is, since
+# "real", "HODL" and "adjusted" can look confusingly similar otherwise (see
+# the "How to read this chart" expander below and docs/rebalancing-simulator.md).
+SERIES_REAL = "Real strategy (with rebalancing)"
+SERIES_HODL = "HODL (real weights, no rebalancing)"
+SERIES_ADJUSTED = "Adjusted buy-and-hold (your weights)"
+
 PLATFORMS = {
     "Glider": glider,
     "Reserve Protocol": reserve,
@@ -392,6 +399,22 @@ with perf_control_col:
         )
 chart_mode = chart_mode or "Indexed value"
 
+with st.expander("How to read this chart"):
+    st.caption(
+        f"**{SERIES_REAL}** comes straight from the platform's own performance "
+        "source (see adapter) — it reflects whatever rebalancing actually "
+        f"happened on-chain/in the strategy. **{SERIES_HODL}** and "
+        f"**{SERIES_ADJUSTED}** are both computed here by recombining each "
+        "asset's individual historical price (via DefiLlama) — never taken "
+        "from the platform — so an asset with no available price history is "
+        "excluded from both, listed as such, never invented. HODL always "
+        "uses the basket's real current weights, static, regardless of the "
+        "sliders above; Adjusted uses whatever weights the sliders are set "
+        "to right now. With the sliders at their real/reset values, Adjusted "
+        "and HODL use the same weights and should track closely — small "
+        "differences can still appear from excluded assets or data timing."
+    )
+
 performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
 
 perf_frames = []
@@ -400,10 +423,21 @@ if performance_error:
     st.error(performance_error)
 elif performance and performance.get("points"):
     df_real = pd.DataFrame(performance["points"])
-    df_real["series"] = f"Real ({performance.get('method') or '?'})"
+    df_real["series"] = SERIES_REAL
     perf_frames.append(df_real)
 else:
     st.info("No real performance data for this basket.")
+
+if real_weights:
+    hodl_assets = [
+        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+        for asset, weight in real_weights.items()
+    ]
+    hodl_points, _hodl_excluded = simulate_weighted_performance(hodl_assets)
+    if hodl_points:
+        df_hodl = pd.DataFrame(hodl_points)
+        df_hodl["series"] = SERIES_HODL
+        perf_frames.append(df_hodl)
 
 if edited_weights:
     weighted_assets = [
@@ -413,7 +447,7 @@ if edited_weights:
     sim_points, excluded = simulate_weighted_performance(weighted_assets)
     if sim_points:
         df_sim = pd.DataFrame(sim_points)
-        df_sim["series"] = "Simulated (adjusted weights)"
+        df_sim["series"] = SERIES_ADJUSTED
         perf_frames.append(df_sim)
         if excluded:
             st.caption(
@@ -435,16 +469,10 @@ if perf_frames:
         x="date",
         y="display_value",
         color="series",
-        title=f"Performance — real vs. simulated ({chart_mode.lower()})",
+        title=f"Performance — real vs. HODL vs. adjusted ({chart_mode.lower()})",
         labels={"date": "Date", "display_value": y_label},
     )
     st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
-    st.caption(
-        "'Real' uses the platform's native method/source (see adapter). "
-        "'Simulated' recombines each asset's historical price using the "
-        "weights adjusted above — it only matches 'Real' if the adjusted "
-        "weights equal the real ones."
-    )
 
 # --- strategy comparison overlay --------------------------------------------
 
