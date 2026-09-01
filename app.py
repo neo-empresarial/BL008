@@ -86,6 +86,54 @@ def cached_discover_glider_strategies(collection: str = "curated"):
     return glider.discover_strategies(collection=collection)
 
 
+# Discovery hits a paginated API/subgraph per platform — cached for an hour
+# (much longer than CACHE_TTL_SECONDS) so it isn't repeated on every rerun.
+DISCOVERY_CACHE_TTL_SECONDS = 3600
+
+
+@st.cache_data(ttl=DISCOVERY_CACHE_TTL_SECONDS)
+def cached_discover_baskets(platform_name: str):
+    return PLATFORMS[platform_name].discover_baskets()
+
+
+def build_basket_options(platform_name: str) -> dict[str, str]:
+    """label -> basket_id for the sidebar/comparison selects: pinned
+    `EXAMPLE_BASKETS` first (their curated labels), then every other basket
+    `discover_baskets()` returns for this platform. Falls back to
+    `EXAMPLE_BASKETS` alone (with a warning) if discovery fails or returns
+    nothing — never an empty select.
+    """
+    adapter = PLATFORMS[platform_name]
+    pinned = dict(adapter.EXAMPLE_BASKETS)
+
+    with st.spinner(f"Loading {platform_name} strategies…"):
+        rows, discovery_error = safe_call(cached_discover_baskets, platform_name)
+
+    if not rows:
+        if discovery_error:
+            st.sidebar.warning(
+                f"Couldn't load the full {platform_name} strategy list "
+                f"({discovery_error}) — showing pinned examples only."
+            )
+        return pinned
+
+    pinned_ids = {basket_id.lower() for basket_id in pinned.values()}
+    name_counts: dict[str, int] = {}
+    for row in rows:
+        name_counts[row["name"]] = name_counts.get(row["name"], 0) + 1
+
+    options = dict(pinned)
+    for row in rows:
+        if row["basket_id"].lower() in pinned_ids:
+            continue  # already covered by a pinned example with a nicer label
+        label = row["name"]
+        if name_counts[label] > 1 or label in options:
+            suffix = f" — {row['chain']}" if row.get("chain") else ""
+            label = f"{row['name']}{suffix} ({row['basket_id'][-8:]})"
+        options[label] = row["basket_id"]
+    return options
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def cached_get_price_history(price_ref: str, days: int = SIMULATION_DAYS):
     return pricing.get_price_history(price_ref, days=days)
@@ -217,22 +265,23 @@ with st.sidebar:
     platform_name = st.selectbox("Platform", list(PLATFORMS.keys()))
     adapter = PLATFORMS[platform_name]
 
+    basket_options = build_basket_options(platform_name)
     example_label = st.selectbox(
-        "Basket / strategy (example)",
-        list(adapter.EXAMPLE_BASKETS.keys()) + ["Other (paste manually)"],
+        "Basket / strategy",
+        list(basket_options.keys()) + ["Other (paste manually)"],
     )
     if example_label == "Other (paste manually)":
         placeholder = "strategyId" if platform_name == "Glider" else "<chain>:<address>"
         basket_id = st.text_input("basket_id", placeholder=placeholder).strip()
     else:
-        basket_id = adapter.EXAMPLE_BASKETS[example_label]
+        basket_id = basket_options[example_label]
 
     st.divider()
     st.caption("Compare strategies")
     comparison_options = {
         f"{p_name} / {b_label}": (p_name, b_id)
-        for p_name, p_adapter in PLATFORMS.items()
-        for b_label, b_id in p_adapter.EXAMPLE_BASKETS.items()
+        for p_name in PLATFORMS
+        for b_label, b_id in build_basket_options(p_name).items()
     }
     comparison_selection = st.multiselect(
         "Compare strategies",
