@@ -1,0 +1,10 @@
+[theme]
+base = "dark"
+primaryColor = "#00d18f"
+backgroundColor = "#0b0e11"
+secondaryBackgroundColor = "#12161b"
+textColor = "#d7dde3"
+font = "monospace"
+
+[ui]
+hideTopBar = false
