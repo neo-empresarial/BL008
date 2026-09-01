@@ -86,6 +86,54 @@ def cached_discover_glider_strategies(collection: str = "curated"):
     return glider.discover_strategies(collection=collection)
 
 
+# Discovery hits a paginated API/subgraph per platform — cached for an hour
+# (much longer than CACHE_TTL_SECONDS) so it isn't repeated on every rerun.
+DISCOVERY_CACHE_TTL_SECONDS = 3600
+
+
+@st.cache_data(ttl=DISCOVERY_CACHE_TTL_SECONDS)
+def cached_discover_baskets(platform_name: str):
+    return PLATFORMS[platform_name].discover_baskets()
+
+
+def build_basket_options(platform_name: str) -> dict[str, str]:
+    """label -> basket_id for the sidebar/comparison selects: pinned
+    `EXAMPLE_BASKETS` first (their curated labels), then every other basket
+    `discover_baskets()` returns for this platform. Falls back to
+    `EXAMPLE_BASKETS` alone (with a warning) if discovery fails or returns
+    nothing — never an empty select.
+    """
+    adapter = PLATFORMS[platform_name]
+    pinned = dict(adapter.EXAMPLE_BASKETS)
+
+    with st.spinner(f"Loading {platform_name} strategies…"):
+        rows, discovery_error = safe_call(cached_discover_baskets, platform_name)
+
+    if not rows:
+        if discovery_error:
+            st.sidebar.warning(
+                f"Couldn't load the full {platform_name} strategy list "
+                f"({discovery_error}) — showing pinned examples only."
+            )
+        return pinned
+
+    pinned_ids = {basket_id.lower() for basket_id in pinned.values()}
+    name_counts: dict[str, int] = {}
+    for row in rows:
+        name_counts[row["name"]] = name_counts.get(row["name"], 0) + 1
+
+    options = dict(pinned)
+    for row in rows:
+        if row["basket_id"].lower() in pinned_ids:
+            continue  # already covered by a pinned example with a nicer label
+        label = row["name"]
+        if name_counts[label] > 1 or label in options:
+            suffix = f" — {row['chain']}" if row.get("chain") else ""
+            label = f"{row['name']}{suffix} ({row['basket_id'][-8:]})"
+        options[label] = row["basket_id"]
+    return options
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def cached_get_price_history(price_ref: str, days: int = SIMULATION_DAYS):
     return pricing.get_price_history(price_ref, days=days)
@@ -217,22 +265,23 @@ with st.sidebar:
     platform_name = st.selectbox("Platform", list(PLATFORMS.keys()))
     adapter = PLATFORMS[platform_name]
 
+    basket_options = build_basket_options(platform_name)
     example_label = st.selectbox(
-        "Basket / strategy (example)",
-        list(adapter.EXAMPLE_BASKETS.keys()) + ["Other (paste manually)"],
+        "Basket / strategy",
+        list(basket_options.keys()) + ["Other (paste manually)"],
     )
     if example_label == "Other (paste manually)":
         placeholder = "strategyId" if platform_name == "Glider" else "<chain>:<address>"
         basket_id = st.text_input("basket_id", placeholder=placeholder).strip()
     else:
-        basket_id = adapter.EXAMPLE_BASKETS[example_label]
+        basket_id = basket_options[example_label]
 
     st.divider()
     st.caption("Compare strategies")
     comparison_options = {
         f"{p_name} / {b_label}": (p_name, b_id)
-        for p_name, p_adapter in PLATFORMS.items()
-        for b_label, b_id in p_adapter.EXAMPLE_BASKETS.items()
+        for p_name in PLATFORMS
+        for b_label, b_id in build_basket_options(p_name).items()
     }
     comparison_selection = st.multiselect(
         "Compare strategies",
@@ -246,32 +295,46 @@ if not basket_id:
 
 theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
 
-# tvlUsd only comes from Glider's discovery; Reserve and QuantAMM only have
-# aggregated TVL per protocol via DefiLlama (not per individual basket) —
-# see docstring of get_tvl_usd_defillama in each adapter.
+# Per-basket TVL, when available, comes from the same discover_baskets()
+# rows the sidebar already fetched (cached) — QuantAMM has real per-pool
+# TVL there; Reserve's subgraph has no TVL field, so tvl_usd is always None
+# for it (see each adapter's discover_baskets docstring). Glider additionally
+# shows wallet count, which isn't part of the shared discovery shape and
+# needs its own (also cached) discover_strategies call.
+basket_rows, basket_rows_error = safe_call(cached_discover_baskets, platform_name)
+basket_match = None
+if basket_rows:
+    basket_match = next(
+        (r for r in basket_rows if r["basket_id"].lower() == basket_id.lower()), None
+    )
+per_basket_tvl = basket_match["tvl_usd"] if basket_match else None
+
 if platform_name == "Glider":
-    discovery, discovery_error = safe_call(cached_discover_glider_strategies, "curated")
-    metrics_match = None
-    if discovery:
-        metrics_match = next((s for s in discovery if s["strategy_id"] == basket_id), None)
-    if metrics_match:
-        col1, col2 = st.columns(2)
-        col1.metric(
-            "TVL (USD)",
-            f"${metrics_match['tvl_usd']:,.2f}" if metrics_match["tvl_usd"] is not None else "—",
-        )
-        col2.metric(
-            "Nº of wallets",
-            metrics_match["portfolio_count"] if metrics_match["portfolio_count"] is not None else "—",
-        )
-    elif discovery_error:
-        st.caption(f"TVL/wallet count unavailable: {discovery_error}")
-else:
-    tvl, _ = safe_call(adapter.get_tvl_usd_defillama)
-    if tvl is not None:
+    strategies, strategies_error = safe_call(cached_discover_glider_strategies, "curated")
+    portfolio_count = None
+    if strategies:
+        strategy_match = next((s for s in strategies if s["strategy_id"] == basket_id), None)
+        portfolio_count = strategy_match["portfolio_count"] if strategy_match else None
+
+    col1, col2 = st.columns(2)
+    col1.metric("TVL (USD)", f"${per_basket_tvl:,.2f}" if per_basket_tvl is not None else "—")
+    col2.metric("Nº of wallets", portfolio_count if portfolio_count is not None else "—")
+    if per_basket_tvl is None and portfolio_count is None:
         st.caption(
-            f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
+            "TVL/wallet count unavailable: "
+            + (basket_rows_error or strategies_error or "this strategy isn't in the curated discovery collection.")
         )
+else:
+    if per_basket_tvl is not None:
+        st.metric("TVL (USD)", f"${per_basket_tvl:,.2f}")
+    else:
+        tvl, tvl_error = safe_call(adapter.get_tvl_usd_defillama)
+        if tvl is not None:
+            st.caption(
+                f"Per-basket TVL unavailable — protocol-wide TVL (DefiLlama, cross-check): ${tvl:,.0f}"
+            )
+        else:
+            st.caption("TVL unavailable" + (f": {tvl_error}" if tvl_error else "."))
 
 # --- allocation editor ------------------------------------------------------
 

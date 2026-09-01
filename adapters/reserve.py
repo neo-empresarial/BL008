@@ -8,6 +8,7 @@ adapters/quantamm.py — all return exactly these shapes):
 - get_rebalance_history(basket_id) -> list[{"date": str ISO, "description": str,
     "weights_after": list[{"asset","weight_pct"}] | None}]
 - get_performance(basket_id) -> {"method": str, "points": [{"date", "percent_change"}]}
+- discover_baskets() -> list[{"basket_id", "name", "tvl_usd", "chain"}]
 
 No function here uses Streamlit — caching is the caller's responsibility (see
 app.py, `st.cache_data`).
@@ -165,6 +166,56 @@ def _fetch_rebalances(chain_key: str, address: str) -> list[dict[str, Any]]:
     url = INDEX_SUBGRAPH_URLS[chain_key]
     data = _graphql(url, _REBALANCES_QUERY, {"id": address, "first": 200})
     return data.get("rebalances") or []
+
+
+_DTFS_QUERY = """
+query ListDtfs($first: Int!, $skip: Int!) {
+  dtfs(first: $first, skip: $skip, orderBy: id) {
+    id
+    token {
+      symbol
+      name
+    }
+  }
+}
+"""
+
+_DISCOVERY_PAGE_SIZE = 200
+
+
+def discover_baskets() -> list[dict[str, Any]]:
+    """Lists every Index DTF across all supported chains (mainnet, base,
+    bsc), via the same Goldsky subgraphs `_fetch_rebalances` uses — paginated
+    with `skip` until a page comes back short. **Index DTFs only**: this
+    subgraph has no Yield DTF entities (see module docstring), so Yield DTFs
+    like eUSD never appear here even though `EXAMPLE_BASKETS` pins one for
+    illustration.
+
+    Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by name.
+    `tvl_usd` is always None — this subgraph has no TVL field; use
+    `get_tvl_usd_defillama()` for a protocol-wide cross-check instead.
+    """
+    rows: list[dict[str, Any]] = []
+    for chain_key, url in INDEX_SUBGRAPH_URLS.items():
+        skip = 0
+        while True:
+            data = _graphql(url, _DTFS_QUERY, {"first": _DISCOVERY_PAGE_SIZE, "skip": skip})
+            page = data.get("dtfs") or []
+            for dtf in page:
+                token = dtf.get("token") or {}
+                name = token.get("symbol") or token.get("name") or dtf.get("id")
+                rows.append(
+                    {
+                        "basket_id": f"{chain_key}:{dtf['id']}",
+                        "name": name,
+                        "tvl_usd": None,
+                        "chain": chain_key,
+                    }
+                )
+            if len(page) < _DISCOVERY_PAGE_SIZE:
+                break
+            skip += _DISCOVERY_PAGE_SIZE
+    return sorted(rows, key=lambda r: r["name"])
 
 
 def _asset_row(token: dict[str, Any], weight_pct: float, chain_key: str) -> dict[str, Any]:

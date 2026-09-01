@@ -35,10 +35,12 @@ routing, no tabs, **no side-by-side columns for the main flow** — every
 section stacks vertically so the page scrolls naturally and the
 performance chart gets full page width.
 
-- **Sidebar** — platform picker, basket picker (example dropdown or manual
-  `basket_id`), and a compact multi-select to pick strategies for the
-  comparison overlay (`<Platform> / <example label>` options built from
-  every adapter's `EXAMPLE_BASKETS`).
+- **Sidebar** — platform picker; basket picker built from that platform's
+  live `discover_baskets()` (curated `EXAMPLE_BASKETS` pinned at the top,
+  falling back to them alone if discovery fails) or a manual `basket_id`;
+  and a compact multi-select, across all three platforms' discovered
+  baskets, to pick strategies for the comparison overlay (`<Platform> /
+  <label>` options) — see Basket discovery below.
 - **Header** — compact console header (platform badge, basket id).
 - **Allocation** — full-width section: methodology expander, reset button,
   one row per asset (label, current %, slider), donut chart, table.
@@ -73,14 +75,15 @@ adapter logic.
 | `get_rebalance_history(basket_id)` | `list[{"date": str \| None, "description": str, "weights_after": list[{"asset","weight_pct"}]}]` |
 | `get_performance(basket_id)` | `{"method": str \| None, "points": list[{"date": str, "percent_change": float \| None}]}` |
 | `get_tvl_usd_defillama()` | `float \| None` — **absent on `glider`**, present on `reserve` and `quantamm` |
+| `discover_baskets()` | `list[{"basket_id": str, "name": str, "tvl_usd": float \| None, "chain": str \| None}]` — see Basket discovery below |
 
 Each adapter module also exports:
 
-- `EXAMPLE_BASKETS: dict[str, str]` — label → `basket_id`, used to populate both the sidebar basket dropdown and the comparison multi-select.
+- `EXAMPLE_BASKETS: dict[str, str]` — label → `basket_id`; a handful of curated, hand-picked baskets pinned at the top of the sidebar/comparison selects, no longer the only source (see Basket discovery).
 - `DECISION_MAKER: str` — one sentence, shown in the protocol details section.
 - An exception class (`GliderAPIError`, `ReserveAPIError`, `QuantAMMAPIError`), all subclasses of `Exception` with a readable `str()`.
 
-Glider additionally exposes `discover_strategies(collection="curated", sort=None, limit=50) -> list[dict]` (used only for TVL/wallet-count lookup, not for the basket selector) and the lower-level `get_target_allocation` / `get_version_history` that `get_current_allocation` / `get_rebalance_history` wrap.
+Glider additionally exposes `discover_strategies(collection="curated", sort=None, limit=50) -> list[dict]` (each item carrying `strategy_id`, `name`, `tvl_usd`, `portfolio_count`, `assets` — the richer shape `discover_baskets()` wraps, plus `portfolio_count`, which the shared shape doesn't carry) and the lower-level `get_target_allocation` / `get_version_history` that `get_current_allocation` / `get_rebalance_history` wrap.
 
 `adapters/pricing.py` exposes `get_price_history(price_ref, days=180) -> list[{"timestamp": int, "price": float}]`, `caip19_to_price_ref(asset_id) -> str | None`, `price_ref_to_explorer_url(price_ref) -> str | None`, and `resolve_token_symbol(price_ref) -> str | None` — all shared by the three adapters and/or by `app.py`.
 
@@ -162,6 +165,37 @@ never drift out of sync with each other.
 
 ## Rules and behavior
 
+**Basket discovery.** `app.py`'s `build_basket_options(platform_name)` calls
+`cached_discover_baskets(platform_name)` (`st.cache_data(ttl=3600)` — much
+longer than the 5-minute `CACHE_TTL_SECONDS` used elsewhere, since discovery
+paginates a whole subgraph/API and shouldn't repeat every rerun) and merges
+the result with that platform's pinned `EXAMPLE_BASKETS`:
+
+- Pinned examples always appear first, keeping their curated labels.
+- A discovered row is skipped if its `basket_id` (case-insensitively)
+  already matches a pinned one — no duplicate entry for the same basket.
+- A discovered row whose `name` collides with another row, or with a
+  pinned label, gets a disambiguating suffix: `"{name} — {chain} ({last 8
+  chars of basket_id})"`.
+- If discovery fails or returns nothing, the select falls back to
+  `EXAMPLE_BASKETS` alone, with a `st.sidebar.warning` naming the error —
+  the select is never empty and manual `basket_id` entry always stays
+  available regardless of discovery's outcome.
+
+Per-adapter discovery source and scope:
+
+| Adapter | Source | Scope |
+|---|---|---|
+| `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
+| `reserve.discover_baskets` | Goldsky `dtfs` query, paginated with `skip` per chain (mainnet/base/bsc) | **Index DTFs only** — this subgraph has no Yield DTF entities, so Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example |
+| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | Chains outside `CHAIN_TO_DEFILLAMA` are never queried |
+
+The comparison multi-select in the sidebar calls `build_basket_options` for
+every platform (so switching the main platform picker doesn't limit what
+can be compared) and flattens them into `"{platform} / {label}"` options —
+this can be a long list (Reserve alone discovers 300+ Index DTFs at the
+time of writing); there is no search/filter on top of it yet.
+
 **Proportional allocation rebalancing.** Each basket's committed weights
 are tracked in `st.session_state["prev_w::{platform}::{basket_id}"]`. On
 each rerun, `app.py` compares each slider's pending value (from
@@ -231,13 +265,23 @@ see Surface) drives both the Performance chart and the comparison overlay
 and share one `chart_mode` value, so switching it updates both charts
 identically.
 
-**TVL display.**
-- Glider: comes from `discover_strategies("curated")` cross-referenced by
-  `strategy_id` — if the basket isn't in the "curated" collection, no TVL
-  is shown, no error either (this is a silent miss, not a failure).
-- Reserve / QuantAMM: `get_tvl_usd_defillama()` returns the **entire
-  protocol's** TVL, not the basket's. Always labeled as a "cross-check" in
-  the UI, never presented as if it were basket-specific.
+**TVL display.** `app.py` first looks up the selected `basket_id` in that
+platform's already-fetched `cached_discover_baskets` rows (`basket_match`)
+for a per-basket `tvl_usd`:
+- **Glider**: shows a `TVL (USD)` / `Nº of wallets` metric pair always —
+  `"—"` for either value that's unavailable, never blank. Wallet count
+  needs a separate `discover_strategies("curated")` call (`portfolio_count`
+  isn't in the shared discovery shape) cross-referenced by `strategy_id`.
+  If both TVL and wallet count are unavailable, a caption names why (a
+  discovery error, or "this strategy isn't in the curated discovery
+  collection").
+- **QuantAMM**: `basket_match["tvl_usd"]` is real per-pool TVL
+  (`dynamicData.totalLiquidity`), shown directly as a metric when present.
+- **Reserve**: `basket_match["tvl_usd"]` is always `None` (this subgraph
+  has no TVL field), so it falls back to `get_tvl_usd_defillama()` — the
+  **entire protocol's** TVL — shown as a caption explicitly labeled
+  "cross-check", never presented as if it were basket-specific. If even
+  that fails, a plain "TVL unavailable" caption is shown.
 
 **Rebalance frequency.** `estimate_monthly_frequency` needs at least 2
 dated history events to compute anything; it divides event count by
@@ -268,8 +312,9 @@ comparison entry) never takes down the rest of the page.
   the comparison overlay carries an explicit caption saying so, and the
   one metric framed as directly comparable is who decides a rebalance and
   how often (protocol details section).
-- No per-basket TVL for Reserve or QuantAMM — only protocol-wide TVL via
-  DefiLlama exists for those two (see Rules and behavior above).
+- No per-basket TVL for Reserve — its subgraph has no TVL field, only the
+  protocol-wide DefiLlama cross-check is available there (see Rules and
+  behavior above). QuantAMM does have real per-pool TVL via discovery.
 - No governance-proposal linkage for Reserve rebalances — the subgraph has
   no FK between a `Rebalance` and the proposal that approved it, so
   `description` never names a specific proposal (documented TODO in
@@ -277,9 +322,9 @@ comparison entry) never takes down the rest of the page.
 - No composition or rebalance history for Reserve **Yield DTFs** (e.g.
   eUSD) — `get_current_allocation`/`get_rebalance_history` raise
   `ReserveAPIError` for these instead of returning partial or guessed data.
-- No free-exploration UI for Glider's `discover_strategies` — the function
-  exists and is used internally for TVL lookup, but there's no dropdown to
-  browse the full curated collection.
+- No search/filter on the basket selects — with hundreds of discovered
+  baskets on some platforms (Reserve in particular), the plain select can
+  be long; search/filter is future work.
 - No invented token symbols anywhere — Glider's `display_asset` either
   comes from a real DefiLlama lookup or falls back to a truncated address;
   it never guesses a name from context.
@@ -328,10 +373,19 @@ comparison entry) never takes down the rest of the page.
   percentage point) become a row. The pool's underlying weight curve is
   continuous and changes far more often than the table implies — the table
   is a display sampling, not the full signal.
-- **Glider TVL silently disappears for non-curated strategies.** If
-  `basket_id` isn't returned by `discover_strategies("curated")`, both
-  metric columns render `—` with no error shown, even though the strategy
-  itself may load fine elsewhere on the page.
+- **A basket can load fine everywhere else on the page while its TVL/wallet
+  metrics show `—`.** Cause: the basket isn't in Glider's curated discovery
+  collection (or, for Reserve/QuantAMM, isn't in that platform's
+  `discover_baskets()` results — e.g. it was entered manually). This is
+  expected, and a caption explains it rather than leaving it silent.
+- **A manually-pasted `basket_id` can still pick up a TVL/wallet-count
+  match.** The `basket_match` lookup compares `basket_id` strings
+  (case-insensitively) against that platform's discovered rows regardless
+  of whether the id came from the select or the manual text input — so
+  pasting an id that happens to be in the discovered set behaves exactly
+  like picking it from the dropdown. It only shows `—` when the basket is
+  genuinely outside discovery's scope (e.g. a Reserve Yield DTF, or a
+  non-curated Glider strategy).
 - **`GLIDER_API_KEY` missing doesn't crash the app.** Selecting Glider
   without the key configured shows a contained `st.error` from
   `GliderAPIError` in each affected section (including any Glider entry
