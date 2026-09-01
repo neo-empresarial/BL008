@@ -19,7 +19,8 @@ adapter exposes when it can map the asset to a chain:address pair
 recognized by DefiLlama) using the new weights. An asset with no available
 historical price is excluded from the simulation and listed as such, never
 invented. The performance chart (and the comparison overlay) can show
-either an indexed value (base 100) or percent return, via a shared toggle.
+an indexed value (base 100), percent return, or growth of a $10,000 stake,
+via a shared toggle.
 
 Caveat (repeated from the adapter): the underlying assets differ across the
 three platforms (tokenized stocks vs. crypto vs. crypto pools), and the
@@ -171,17 +172,38 @@ def simulate_weighted_performance(
     return points, excluded
 
 
+CHART_MODES = ["Indexed value", "Percent return", "Growth of $10k"]
+GROWTH_BASE_USD = 10_000.0
+
+
 def to_display_series(df: pd.DataFrame, chart_mode: str) -> pd.DataFrame:
-    """Converts a {"percent_change", ...} frame into the active chart mode:
-    "Indexed value" (base 100 at each series' first point, `percent_change`
-    already is relative to that same first point) or "Percent return"
-    (`percent_change` as-is)."""
+    """Converts a {"percent_change", ...} frame into the active chart mode
+    (one of CHART_MODES), all derived from `percent_change` — each series'
+    return since its own first point, never a new data source:
+
+    - "Indexed value": base 100 at each series' first point.
+    - "Percent return": `percent_change` as-is.
+    - "Growth of $10k": what a $10,000 stake would be worth, e.g. a 10%
+      return renders as $11,000, a -10% return as $9,000.
+    """
     df = df.copy()
     if chart_mode == "Indexed value":
         df["display_value"] = 100.0 + df["percent_change"]
+    elif chart_mode == "Growth of $10k":
+        df["display_value"] = GROWTH_BASE_USD * (1.0 + df["percent_change"] / 100.0)
     else:
         df["display_value"] = df["percent_change"]
     return df
+
+
+def chart_mode_axis_label(chart_mode: str) -> str:
+    """Y-axis label for the active chart mode, shared by every chart that
+    uses `to_display_series`."""
+    if chart_mode == "Indexed value":
+        return "Indexed value (base 100)"
+    if chart_mode == "Growth of $10k":
+        return "Growth of $10,000"
+    return "Accumulated return (%)"
 
 
 # --- UI ----------------------------------------------------------------
@@ -386,14 +408,14 @@ with perf_control_col:
     if hasattr(st, "segmented_control"):
         chart_mode = st.segmented_control(
             "Chart mode",
-            ["Indexed value", "Percent return"],
+            CHART_MODES,
             default="Indexed value",
             label_visibility="collapsed",
         )
     else:
         chart_mode = st.radio(
             "Chart mode",
-            ["Indexed value", "Percent return"],
+            CHART_MODES,
             horizontal=True,
             label_visibility="collapsed",
         )
@@ -463,7 +485,7 @@ if edited_weights:
 
 if perf_frames:
     df_perf_all = to_display_series(pd.concat(perf_frames, ignore_index=True), chart_mode)
-    y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
+    y_label = chart_mode_axis_label(chart_mode)
     fig_perf = px.line(
         df_perf_all,
         x="date",
@@ -497,7 +519,7 @@ else:
 
     if comparison_frames:
         df_comparison = to_display_series(pd.concat(comparison_frames, ignore_index=True), chart_mode)
-        y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
+        y_label = chart_mode_axis_label(chart_mode)
         fig_comparison = px.line(
             df_comparison,
             x="date",
