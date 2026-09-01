@@ -212,18 +212,17 @@ else:
             f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
         )
 
-tab_allocation, tab_history, tab_performance, tab_protocol = st.tabs(
-    ["Allocation", "History", "Performance", "Protocol"]
-)
+# --- primary workspace: allocation editor (left) + live performance chart (right) ---
 
-# --- current target allocation, with concentration sliders -----------------
+allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
 
-with tab_allocation:
-    allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
+edited_weights: dict[str, float] = {}
+price_refs: dict[str, str | None] = {}
 
-    edited_weights: dict[str, float] = {}
-    price_refs: dict[str, str | None] = {}
+workspace_left, workspace_right = st.columns([2, 3])
 
+with workspace_left:
+    st.subheader("Allocation")
     if allocation_error:
         st.error(allocation_error)
     elif not allocation:
@@ -236,7 +235,7 @@ with tab_allocation:
                 "Adjust each asset's concentration — the sliders start at the real "
                 "weights. Moving one asset proportionally rescales the others so "
                 "the total always stays at 100%. The simulated performance curve "
-                "below uses these weights."
+                "on the right uses these weights."
             )
 
         def _slider_key(asset: str) -> str:
@@ -312,48 +311,24 @@ with tab_allocation:
         df_allocation = pd.DataFrame(
             [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
         )
-        chart_col, table_col = st.columns([2, 1])
-        with chart_col:
-            fig = px.pie(
-                df_allocation,
-                names="asset",
-                values="weight_pct",
-                title="Simulated weight per asset (%)",
-                hole=0.55,
-            )
-            st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
-        with table_col:
-            st.dataframe(
-                df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-# --- rebalance history -------------------------------------------------
-
-with tab_history:
-    history, history_error = safe_call(cached_get_rebalance_history, platform_name, basket_id)
-
-    if history_error:
-        st.error(history_error)
-    elif not history:
-        st.info("No rebalance event found.")
-    else:
-        df_history = pd.DataFrame(
-            [
-                {
-                    "Date": h["date"],
-                    "What changed": h["description"],
-                    "Nº of assets": len(h["weights_after"]) if h["weights_after"] else None,
-                }
-                for h in reversed(history)  # most recent first
-            ]
+        fig = px.pie(
+            df_allocation,
+            names="asset",
+            values="weight_pct",
+            title="Simulated weight per asset (%)",
+            hole=0.55,
         )
-        st.dataframe(df_history, use_container_width=True, hide_index=True)
+        st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
+        st.dataframe(
+            df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # --- performance curve: real vs. simulated with adjusted weights -----------
 
-with tab_performance:
+with workspace_right:
+    st.subheader("Performance")
     performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
 
     perf_frames = []
@@ -407,9 +382,29 @@ with tab_performance:
             "weights equal the real ones."
         )
 
-# --- comparative card: who decides + rebalance frequency -------------------
+# --- secondary sections: rebalance history + protocol details --------------
 
-with tab_protocol:
+history, history_error = safe_call(cached_get_rebalance_history, platform_name, basket_id)
+
+with st.expander("Rebalance history"):
+    if history_error:
+        st.error(history_error)
+    elif not history:
+        st.info("No rebalance event found.")
+    else:
+        df_history = pd.DataFrame(
+            [
+                {
+                    "Date": h["date"],
+                    "What changed": h["description"],
+                    "Nº of assets": len(h["weights_after"]) if h["weights_after"] else None,
+                }
+                for h in reversed(history)  # most recent first
+            ]
+        )
+        st.dataframe(df_history, use_container_width=True, hide_index=True)
+
+with st.expander("Protocol details"):
     st.caption(
         "The underlying assets and price curve are NOT directly comparable "
         "across platforms — this is."
