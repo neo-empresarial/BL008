@@ -192,6 +192,19 @@ with st.sidebar:
     else:
         basket_id = adapter.EXAMPLE_BASKETS[example_label]
 
+    st.divider()
+    st.caption("Compare strategies")
+    comparison_options = {
+        f"{p_name} / {b_label}": (p_name, b_id)
+        for p_name, p_adapter in PLATFORMS.items()
+        for b_label, b_id in p_adapter.EXAMPLE_BASKETS.items()
+    }
+    comparison_selection = st.multiselect(
+        "Compare strategies",
+        list(comparison_options.keys()),
+        label_visibility="collapsed",
+    )
+
 if not basket_id:
     st.warning("Choose an example or enter a basket_id in the sidebar.")
     st.stop()
@@ -401,6 +414,45 @@ with workspace_right:
             "'Simulated' recombines each asset's historical price using the "
             "weights adjusted above — it only matches 'Real' if the adjusted "
             "weights equal the real ones."
+        )
+
+# --- strategy comparison overlay --------------------------------------------
+
+st.subheader("Strategy comparison")
+
+if not comparison_selection:
+    st.caption("Select example strategies in the sidebar to overlay their real performance here.")
+else:
+    comparison_frames = []
+    for option_label in comparison_selection:
+        c_platform, c_basket_id = comparison_options[option_label]
+        c_performance, c_error = safe_call(cached_get_performance, c_platform, c_basket_id)
+        if c_error:
+            st.warning(f"{option_label}: {c_error}")
+            continue
+        if not c_performance or not c_performance.get("points"):
+            st.warning(f"{option_label}: no performance data available.")
+            continue
+        df_c = pd.DataFrame(c_performance["points"])
+        df_c["series"] = option_label
+        comparison_frames.append(df_c)
+
+    if comparison_frames:
+        df_comparison = to_display_series(pd.concat(comparison_frames, ignore_index=True), chart_mode)
+        y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
+        fig_comparison = px.line(
+            df_comparison,
+            x="date",
+            y="display_value",
+            color="series",
+            title=f"Strategy comparison ({chart_mode.lower()})",
+            labels={"date": "Date", "display_value": y_label},
+        )
+        st.plotly_chart(theme.apply_chart_theme(fig_comparison), use_container_width=True)
+        st.caption(
+            "Each series uses its own platform's native performance method/source — "
+            "methodologies differ across platforms (see adapter docstrings), so this "
+            "overlay compares shape and timing, not a strictly equivalent metric."
         )
 
 # --- secondary sections: rebalance history + protocol details --------------
