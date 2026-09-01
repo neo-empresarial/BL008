@@ -160,6 +160,11 @@ BL008/
     reserve.py             # Goldsky subgraph + DefiLlama (implemented)
     quantamm.py             # Balancer GraphQL API (implemented)
     pricing.py             # historical price per asset (DefiLlama), used by the weight simulator
+  ui/
+    __init__.py
+    theme.py                # dark console CSS + shared Plotly theme
+  .streamlit/
+    config.toml             # base dark Streamlit theme
   .env.example
   requirements.txt
   README.md

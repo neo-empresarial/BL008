@@ -51,6 +51,8 @@ from typing import Any
 
 import requests
 
+from . import pricing
+
 BALANCER_API_URL = "https://api-v3.balancer.fi/graphql"
 DEFILLAMA_PROTOCOL_SLUG = "balancer-v3"  # TVL for the entire protocol, not per pool
 DEFAULT_TIMEOUT = 15
@@ -155,8 +157,9 @@ def get_current_allocation(basket_id: str) -> list[dict[str, Any]]:
     """Current weight of each asset in the pool (poolTokens[].weight, 0-1 fraction).
 
     Includes `price_ref` (for the "what if I weighted it differently"
-    simulation in app.py) when the chain is in CHAIN_TO_DEFILLAMA — see
-    adapters/pricing.py.
+    simulation in app.py) when the chain is in CHAIN_TO_DEFILLAMA, plus
+    display metadata (`display_asset`, `token_address`, `chain`,
+    `explorer_url`) derived from it — see adapters/pricing.py.
     """
     chain, address = _parse_basket_id(basket_id)
     pool = _fetch_pool(chain, address)
@@ -164,15 +167,25 @@ def get_current_allocation(basket_id: str) -> list[dict[str, Any]]:
     if not tokens:
         raise QuantAMMAPIError("Pool returned no poolTokens from the API.")
     prefix = CHAIN_TO_DEFILLAMA.get(chain)
-    return [
-        {
-            "asset": t.get("symbol"),
-            "weight_pct": (float(t["weight"]) * 100.0),
-            "price_ref": f"{prefix}:{t['address']}" if prefix and t.get("address") else None,
-        }
-        for t in tokens
-        if t.get("weight") is not None
-    ]
+
+    rows = []
+    for t in tokens:
+        if t.get("weight") is None:
+            continue
+        token_address = t.get("address")
+        price_ref = f"{prefix}:{token_address}" if prefix and token_address else None
+        rows.append(
+            {
+                "asset": t.get("symbol"),
+                "weight_pct": (float(t["weight"]) * 100.0),
+                "price_ref": price_ref,
+                "display_asset": t.get("symbol"),
+                "token_address": token_address,
+                "chain": prefix,
+                "explorer_url": pricing.price_ref_to_explorer_url(price_ref),
+            }
+        )
+    return rows
 
 
 def get_rebalance_history(basket_id: str) -> list[dict[str, Any]]:

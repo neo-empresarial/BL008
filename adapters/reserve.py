@@ -61,6 +61,8 @@ from typing import Any
 
 import requests
 
+from . import pricing
+
 GOLDSKY_BASE = (
     "https://api.goldsky.com/api/public/project_cmgzim3e100095np2gjnbh6ry/subgraphs"
 )
@@ -165,6 +167,27 @@ def _fetch_rebalances(chain_key: str, address: str) -> list[dict[str, Any]]:
     return data.get("rebalances") or []
 
 
+def _asset_row(token: dict[str, Any], weight_pct: float, chain_key: str) -> dict[str, Any]:
+    """Builds one allocation row, including display metadata (`display_asset`,
+    `token_address`, `chain`, `explorer_url`) derived from the token's
+    address — see adapters/pricing.py. `asset` keeps its existing fallback
+    (symbol, or raw address when no symbol) for backward compatibility.
+    """
+    address = token.get("address")
+    prefix = DEFILLAMA_CHAIN_PREFIX.get(chain_key)
+    price_ref = f"{prefix}:{address}" if prefix and address else None
+    asset = token.get("symbol") or address
+    return {
+        "asset": asset,
+        "weight_pct": weight_pct,
+        "price_ref": price_ref,
+        "display_asset": asset,
+        "token_address": address,
+        "chain": prefix,
+        "explorer_url": pricing.price_ref_to_explorer_url(price_ref),
+    }
+
+
 def _weights_from_rebalance(rebalance: dict[str, Any], chain_key: str) -> list[dict[str, Any]]:
     """Normalizes weightSpotLimit (raw target quantity) into a relative % per token.
 
@@ -175,24 +198,12 @@ def _weights_from_rebalance(rebalance: dict[str, Any], chain_key: str) -> list[d
     """
     tokens = rebalance.get("tokens") or []
     raw_weights = [_to_float(w) or 0.0 for w in (rebalance.get("weightSpotLimit") or [])]
-    prefix = DEFILLAMA_CHAIN_PREFIX.get(chain_key)
-
-    def price_ref(token: dict[str, Any]) -> str | None:
-        address = token.get("address")
-        return f"{prefix}:{address}" if prefix and address else None
 
     total = sum(raw_weights)
     if total <= 0:
-        return [
-            {"asset": t.get("symbol") or t.get("address"), "weight_pct": 0.0, "price_ref": price_ref(t)}
-            for t in tokens
-        ]
+        return [_asset_row(t, 0.0, chain_key) for t in tokens]
     return [
-        {
-            "asset": token.get("symbol") or token.get("address"),
-            "weight_pct": (weight / total) * 100.0,
-            "price_ref": price_ref(token),
-        }
+        _asset_row(token, (weight / total) * 100.0, chain_key)
         for token, weight in zip(tokens, raw_weights)
     ]
 
