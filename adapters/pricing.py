@@ -90,3 +90,32 @@ def caip19_to_price_ref(asset_id: str | None) -> str | None:
 
     slug = EIP155_TO_DEFILLAMA.get(chain_id)
     return f"{slug}:{asset_reference}" if slug else None
+
+
+# DefiLlama chain slug -> block explorer "token" page template. Shared by all
+# three adapters to turn a price_ref into a link for the UI's asset metadata
+# (see `display_asset`/`explorer_url` in each adapter's get_current_allocation).
+DEFILLAMA_TO_EXPLORER = {
+    "ethereum": "https://etherscan.io/token/{address}",
+    "optimism": "https://optimistic.etherscan.io/token/{address}",
+    "bsc": "https://bscscan.com/token/{address}",
+    "xdai": "https://gnosisscan.io/token/{address}",
+    "polygon": "https://polygonscan.com/token/{address}",
+    "fantom": "https://ftmscan.com/token/{address}",
+    "base": "https://basescan.org/token/{address}",
+    "arbitrum": "https://arbiscan.io/token/{address}",
+    "avax": "https://snowtrace.io/token/{address}",
+    "linea": "https://lineascan.build/token/{address}",
+    "blast": "https://blastscan.io/token/{address}",
+}
+
+
+def price_ref_to_explorer_url(price_ref: str | None) -> str | None:
+    """Turns a "<chain>:<address>" price_ref into a block explorer URL for
+    that token. Returns None when price_ref is None or its chain has no
+    known explorer template above — the caller simply omits the link."""
+    if not price_ref or ":" not in price_ref:
+        return None
+    chain, address = price_ref.split(":", 1)
+    template = DEFILLAMA_TO_EXPLORER.get(chain)
+    return template.format(address=address) if template else None
