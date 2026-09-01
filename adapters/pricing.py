@@ -119,3 +119,26 @@ def price_ref_to_explorer_url(price_ref: str | None) -> str | None:
     chain, address = price_ref.split(":", 1)
     template = DEFILLAMA_TO_EXPLORER.get(chain)
     return template.format(address=address) if template else None
+
+
+def resolve_token_symbol(price_ref: str | None) -> str | None:
+    """Best-effort token symbol lookup for a "<chain>:<address>" price_ref,
+    via DefiLlama's current-price endpoint (`coins.llama.fi/prices/current`
+    — same source family as get_price_history, so no new provider is
+    introduced). Returns None on any network failure, missing entry, or
+    missing symbol — callers must fall back to a safe display value (e.g. a
+    truncated address) rather than inventing a name.
+    """
+    if not price_ref:
+        return None
+    try:
+        response = requests.get(
+            f"https://coins.llama.fi/prices/current/{price_ref}",
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+    symbol = ((body.get("coins") or {}).get(price_ref) or {}).get("symbol")
+    return symbol or None
