@@ -12,6 +12,9 @@ side):
 - get_performance(strategy_id) -> {"method": "TWR"|"MWR", "points": [{"date", "percent_change"}]}
 - discover_strategies(collection) -> list[dict]
     each item: {"strategy_id", "name", "tvl_usd", "portfolio_count", "assets"}
+- discover_baskets() -> list[dict]
+    each item: {"basket_id", "name", "tvl_usd", "chain"} — shared shape with
+    reserve.py/quantamm.py's own discover_baskets, thin wrapper over the above
 
 All functions raise GliderAPIError with a readable message on failure
 (network, HTTP, or {"success": false, ...} envelope). No function here uses
@@ -264,6 +267,37 @@ def get_performance(strategy_id: str) -> dict[str, Any]:
 
 
 # --- interface common to the three adapters (see module docstring) --------
+
+
+def discover_baskets() -> list[dict[str, Any]]:
+    """Lists every strategy in the "curated" collection, in the format
+    shared with reserve.py/quantamm.py's own `discover_baskets`. Thin
+    wrapper over `discover_strategies`, which already paginates fully via
+    `nextCursor` (see its own docstring) — the default page size (`limit`
+    left unset) is used because the API rejects `limit` above 50 with a
+    validation error (confirmed empirically); pagination still covers every
+    page regardless of page size.
+
+    Scope: `collection="curated"` only, same as the TVL lookup in app.py —
+    Glider's API isn't documented to support other collection names, so we
+    don't guess at one.
+
+    Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by TVL
+    descending (ties/missing TVL fall back to name). `chain` is always None
+    — Glider strategies aren't chain-scoped the way Reserve/QuantAMM
+    baskets are.
+    """
+    rows = [
+        {
+            "basket_id": s["strategy_id"],
+            "name": s.get("name") or s["strategy_id"],
+            "tvl_usd": s.get("tvl_usd"),
+            "chain": None,
+        }
+        for s in discover_strategies(collection="curated")
+        if s.get("strategy_id")
+    ]
+    return sorted(rows, key=lambda r: (-(r["tvl_usd"] or 0.0), r["name"]))
 
 
 def _short_address(address: str) -> str:
