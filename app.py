@@ -262,6 +262,17 @@ with workspace_left:
         st.info("No allocation returned by the data source.")
     else:
         price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
+        display_labels = {row["asset"]: (row.get("display_asset") or row["asset"]) for row in allocation}
+
+        def _label_markup(row: dict) -> str:
+            """Human-readable label first; token address/explorer link as
+            secondary metadata, per row's `display_asset`/`explorer_url`
+            (see adapters/pricing.py)."""
+            label = row.get("display_asset") or row["asset"]
+            markup = f"**{label}**"
+            if row.get("explorer_url"):
+                markup += f" [↗]({row['explorer_url']})"
+            return markup
 
         with st.expander("Methodology"):
             st.caption(
@@ -326,7 +337,7 @@ with workspace_left:
             asset = row["asset"]
             label_col, value_col, slider_col = st.columns([2, 1, 5])
             with label_col:
-                st.markdown(f"**{asset}**")
+                st.markdown(_label_markup(row))
             with slider_col:
                 st.slider(
                     str(asset),
@@ -342,7 +353,10 @@ with workspace_left:
         edited_weights = committed
 
         df_allocation = pd.DataFrame(
-            [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
+            [
+                {"asset": display_labels.get(asset, asset), "weight_pct": w}
+                for asset, w in edited_weights.items()
+            ]
         )
         fig = px.pie(
             df_allocation,
