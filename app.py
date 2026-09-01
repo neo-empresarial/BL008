@@ -246,19 +246,25 @@ with tab_allocation:
                 st.session_state[_slider_key(row["asset"])] = round(row["weight_pct"], 1)
 
         raw_weights: dict[str, float] = {}
-        slider_cols = st.columns(3)
-        for i, row in enumerate(allocation):
-            key = _slider_key(row["asset"])
+        for row in allocation:
+            asset = row["asset"]
+            key = _slider_key(asset)
             if key not in st.session_state:
                 st.session_state[key] = round(row["weight_pct"], 1)
-            with slider_cols[i % 3]:
-                raw_weights[row["asset"]] = st.slider(
-                    str(row["asset"]),
+            label_col, value_col, slider_col = st.columns([2, 1, 5])
+            with label_col:
+                st.markdown(f"**{asset}**")
+            with slider_col:
+                raw_weights[asset] = st.slider(
+                    str(asset),
                     min_value=0.0,
                     max_value=100.0,
                     step=0.5,
                     key=key,
+                    label_visibility="collapsed",
                 )
+            with value_col:
+                st.markdown(f"`{raw_weights[asset]:.1f}%`")
 
         total_raw = sum(raw_weights.values())
         st.caption(f"Raw sum of sliders: {total_raw:.1f}% → normalized to 100% below.")
