@@ -1,28 +1,28 @@
 """
-Simulador de rebalanceamento de cestas on-chain — MVP.
+On-chain basket rebalancing simulator — MVP.
 
-Compara o comportamento real de rebalanceamento entre plataformas de
-"index baskets": Glider, Reserve Protocol e QuantAMM/Balancer. Um seletor de
-plataforma troca qual adapter é usado (mesma interface nos três — ver
-docstring de cada um em adapters/), mostrando os mesmos três blocos
-(alocação atual, histórico de rebalanceamento, performance) com o mesmo
-layout, pra permitir side-by-side visual mesmo com dados de fontes bem
-diferentes.
+Compares real rebalancing behavior across "index basket" platforms: Glider,
+Reserve Protocol and QuantAMM/Balancer. A platform selector swaps which
+adapter is used (same interface across all three — see each one's docstring
+in adapters/), showing the same three blocks (current allocation, rebalance
+history, performance) with the same layout, to allow a visual side-by-side
+even with data from very different sources.
 
-Além disso, a alocação atual vira um "e se eu pesasse diferente": cada ativo
-tem um slider (começando no peso real) que, ao ser movido, recalcula a
-pizza/tabela e uma curva de performance simulada — recombinando o preço
-histórico de cada ativo (via `price_ref`, que cada adapter expõe quando
-consegue mapear o ativo pra um par chain:endereço reconhecido pela
-DefiLlama) pelos novos pesos. Ativo sem preço histórico disponível é
-excluído da simulação e listado como tal, nunca inventado.
+Beyond that, the current allocation becomes a "what if I weighted it
+differently": each asset has a slider (starting at its real weight) that,
+when moved, recalculates the pie/table and a simulated performance curve —
+recombining each asset's historical price (via `price_ref`, which each
+adapter exposes when it can map the asset to a chain:address pair
+recognized by DefiLlama) using the new weights. An asset with no available
+historical price is excluded from the simulation and listed as such, never
+invented.
 
-Atenção (repetindo do adapter): os ativos subjacentes são diferentes entre
-as três plataformas (ações tokenizadas vs. cripto vs. pools de cripto), e o
-"peso" em cada uma vem de uma aproximação diferente — não dá pra comparar a
-curva de performance REAL das três diretamente como se fosse a mesma coisa.
-A métrica realmente comparável entre elas é a de "quem decide" e a
-frequência de rebalanceamento, mostrada num card à parte.
+Caveat (repeated from the adapter): the underlying assets differ across the
+three platforms (tokenized stocks vs. crypto vs. crypto pools), and the
+"weight" in each comes from a different approximation — you can't directly
+compare the REAL performance curve across all three as if it were the same
+thing. The metric that's genuinely comparable between them is "who decides"
+and the rebalance frequency, shown in a separate card.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ PLATFORMS = {
 }
 
 
-# --- wrappers com cache (mantém os adapters livres de Streamlit) -----------
+# --- cached wrappers (keeps adapters free of Streamlit) --------------------
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -77,21 +77,21 @@ def cached_get_price_history(price_ref: str, days: int = SIMULATION_DAYS):
 
 
 def safe_call(func, *args):
-    """Chama func(*args) e devolve (resultado, mensagem_de_erro).
+    """Calls func(*args) and returns (result, error_message).
 
-    Cada adapter tem sua própria exceção (GliderAPIError, ReserveAPIError,
-    QuantAMMAPIError) — capturamos Exception de forma genérica aqui de
-    propósito, pra nenhuma seção da tela quebrar com traceback cru não
-    importa qual plataforma esteja selecionada.
+    Each adapter has its own exception (GliderAPIError, ReserveAPIError,
+    QuantAMMAPIError) — we deliberately catch Exception generically here,
+    so no section of the screen breaks with a raw traceback no matter which
+    platform is selected.
     """
     try:
         return func(*args), None
-    except Exception as exc:  # noqa: BLE001 — ver docstring acima
+    except Exception as exc:  # noqa: BLE001 — see docstring above
         return None, str(exc)
 
 
 def estimate_monthly_frequency(history: list[dict]) -> float | None:
-    """Nº de eventos de rebalanceamento por mês, com base no span de datas do histórico."""
+    """Number of rebalance events per month, based on the history's date span."""
     dates = []
     for item in history:
         if not item.get("date"):
@@ -112,13 +112,14 @@ def estimate_monthly_frequency(history: list[dict]) -> float | None:
 def simulate_weighted_performance(
     weighted_assets: list[dict], days: int = SIMULATION_DAYS
 ) -> tuple[list[dict] | None, list[str]]:
-    """Recombina o retorno histórico de cada ativo (via price_ref) pelos pesos
-    ajustados nos sliders. Cada item: {"asset", "weight_pct", "price_ref"}.
+    """Recombines each asset's historical return (via price_ref) using the
+    weights adjusted on the sliders. Each item: {"asset", "weight_pct", "price_ref"}.
 
-    Ativos sem price_ref, ou sem preço histórico disponível na DefiLlama, são
-    excluídos (nunca simulados/inventados) — os pesos dos que sobraram são
-    renormalizados entre si pra a soma continuar em 100%. Retorna
-    (points, excluded); points é None se nenhum ativo tinha preço disponível.
+    Assets with no price_ref, or with no historical price available on
+    DefiLlama, are excluded (never simulated/invented) — the remaining
+    assets' weights are renormalized among themselves so the sum stays at
+    100%. Returns (points, excluded); points is None if no asset had a
+    price available.
     """
     series: dict[str, pd.Series] = {}
     excluded: list[str] = []
@@ -159,37 +160,37 @@ def simulate_weighted_performance(
 # --- UI ----------------------------------------------------------------
 
 
-st.set_page_config(page_title="Simulador de Rebalanceamento", layout="wide")
-st.title("Simulador de Rebalanceamento — Cestas On-Chain")
+st.set_page_config(page_title="Rebalancing Simulator", layout="wide")
+st.title("Rebalancing Simulator — On-Chain Baskets")
 st.caption(
-    "MVP comparando o rebalanceamento real de estratégias de índice on-chain "
-    "entre Glider, Reserve Protocol e QuantAMM/Balancer."
+    "MVP comparing real on-chain index strategy rebalancing "
+    "across Glider, Reserve Protocol and QuantAMM/Balancer."
 )
 
 with st.sidebar:
-    st.header("Configuração")
-    platform_name = st.selectbox("Plataforma", list(PLATFORMS.keys()))
+    st.header("Configuration")
+    platform_name = st.selectbox("Platform", list(PLATFORMS.keys()))
     adapter = PLATFORMS[platform_name]
 
     example_label = st.selectbox(
-        "Basket / estratégia (exemplo)",
-        list(adapter.EXAMPLE_BASKETS.keys()) + ["Outro (colar manualmente)"],
+        "Basket / strategy (example)",
+        list(adapter.EXAMPLE_BASKETS.keys()) + ["Other (paste manually)"],
     )
-    if example_label == "Outro (colar manualmente)":
-        placeholder = "strategyId" if platform_name == "Glider" else "<chain>:<endereço>"
+    if example_label == "Other (paste manually)":
+        placeholder = "strategyId" if platform_name == "Glider" else "<chain>:<address>"
         basket_id = st.text_input("basket_id", placeholder=placeholder).strip()
     else:
         basket_id = adapter.EXAMPLE_BASKETS[example_label]
 
 if not basket_id:
-    st.warning("Escolha um exemplo ou informe um basket_id na barra lateral.")
+    st.warning("Choose an example or enter a basket_id in the sidebar.")
     st.stop()
 
 st.subheader(f"{platform_name} — `{basket_id}`")
 
-# tvlUsd só vem do discovery da Glider; Reserve e QuantAMM só têm TVL
-# agregado por protocolo via DefiLlama (não por basket individual) — ver
-# docstring de get_tvl_usd_defillama em cada adapter.
+# tvlUsd only comes from Glider's discovery; Reserve and QuantAMM only have
+# aggregated TVL per protocol via DefiLlama (not per individual basket) —
+# see docstring of get_tvl_usd_defillama in each adapter.
 if platform_name == "Glider":
     discovery, discovery_error = safe_call(cached_discover_glider_strategies, "curated")
     metrics_match = None
@@ -202,21 +203,21 @@ if platform_name == "Glider":
             f"${metrics_match['tvl_usd']:,.2f}" if metrics_match["tvl_usd"] is not None else "—",
         )
         col2.metric(
-            "Nº de carteiras",
+            "Nº of wallets",
             metrics_match["portfolio_count"] if metrics_match["portfolio_count"] is not None else "—",
         )
     elif discovery_error:
-        st.caption(f"TVL/nº de carteiras indisponíveis: {discovery_error}")
+        st.caption(f"TVL/wallet count unavailable: {discovery_error}")
 else:
     tvl, _ = safe_call(adapter.get_tvl_usd_defillama)
     if tvl is not None:
         st.caption(
-            f"TVL do protocolo inteiro (DefiLlama, cruzamento — não é TVL por basket): ${tvl:,.0f}"
+            f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
         )
 
-# --- alocação-alvo atual, com sliders de concentração ----------------------
+# --- current target allocation, with concentration sliders -----------------
 
-st.markdown("### Alocação-alvo atual")
+st.markdown("### Current target allocation")
 allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
 
 edited_weights: dict[str, float] = {}
@@ -225,20 +226,20 @@ price_refs: dict[str, str | None] = {}
 if allocation_error:
     st.error(allocation_error)
 elif not allocation:
-    st.info("Sem alocação retornada pela fonte de dados.")
+    st.info("No allocation returned by the data source.")
 else:
     price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
 
     st.caption(
-        "Ajuste a concentração de cada ativo — os sliders começam nos pesos "
-        "reais e são normalizados pra somar 100%. A curva de performance "
-        "simulada, mais abaixo, usa esses pesos."
+        "Adjust each asset's concentration — the sliders start at the real "
+        "weights and are normalized to sum to 100%. The simulated "
+        "performance curve below uses these weights."
     )
 
     def _slider_key(asset: str) -> str:
         return f"w::{platform_name}::{basket_id}::{asset}"
 
-    if st.button("Resetar para os pesos reais"):
+    if st.button("Reset to real weights"):
         for row in allocation:
             st.session_state[_slider_key(row["asset"])] = round(row["weight_pct"], 1)
 
@@ -258,49 +259,49 @@ else:
             )
 
     total_raw = sum(raw_weights.values())
-    st.caption(f"Soma bruta dos sliders: {total_raw:.1f}% → normalizada pra 100% abaixo.")
+    st.caption(f"Raw sum of sliders: {total_raw:.1f}% → normalized to 100% below.")
     if total_raw > 0:
         edited_weights = {asset: (w / total_raw) * 100.0 for asset, w in raw_weights.items()}
     else:
-        edited_weights = raw_weights  # todos em zero — não tem o que normalizar
+        edited_weights = raw_weights  # all at zero — nothing to normalize
 
     df_allocation = pd.DataFrame(
         [{"asset": asset, "weight_pct": w} for asset, w in edited_weights.items()]
     )
     chart_col, table_col = st.columns([2, 1])
     with chart_col:
-        fig = px.pie(df_allocation, names="asset", values="weight_pct", title="Peso simulado por ativo (%)")
+        fig = px.pie(df_allocation, names="asset", values="weight_pct", title="Simulated weight per asset (%)")
         st.plotly_chart(fig, use_container_width=True)
     with table_col:
         st.dataframe(
-            df_allocation.rename(columns={"asset": "Ativo", "weight_pct": "Peso simulado (%)"}),
+            df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
             use_container_width=True,
             hide_index=True,
         )
 
-# --- histórico de rebalanceamento -----------------------------------------
+# --- rebalance history -------------------------------------------------
 
-st.markdown("### Histórico de rebalanceamento")
+st.markdown("### Rebalance history")
 history, history_error = safe_call(cached_get_rebalance_history, platform_name, basket_id)
 
 if history_error:
     st.error(history_error)
 elif not history:
-    st.info("Nenhum evento de rebalanceamento encontrado.")
+    st.info("No rebalance event found.")
 else:
     df_history = pd.DataFrame(
         [
             {
-                "Data": h["date"],
-                "O que mudou": h["description"],
-                "Nº de ativos": len(h["weights_after"]) if h["weights_after"] else None,
+                "Date": h["date"],
+                "What changed": h["description"],
+                "Nº of assets": len(h["weights_after"]) if h["weights_after"] else None,
             }
-            for h in reversed(history)  # mais recente primeiro
+            for h in reversed(history)  # most recent first
         ]
     )
     st.dataframe(df_history, use_container_width=True, hide_index=True)
 
-# --- curva de performance: real x simulada com os pesos ajustados ----------
+# --- performance curve: real vs. simulated with adjusted weights -----------
 
 st.markdown("### Performance")
 performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
@@ -311,10 +312,10 @@ if performance_error:
     st.error(performance_error)
 elif performance and performance.get("points"):
     df_real = pd.DataFrame(performance["points"])
-    df_real["série"] = f"Real ({performance.get('method') or '?'})"
+    df_real["series"] = f"Real ({performance.get('method') or '?'})"
     perf_frames.append(df_real)
 else:
-    st.info("Sem dados de performance real para esse basket.")
+    st.info("No real performance data for this basket.")
 
 if edited_weights:
     weighted_assets = [
@@ -324,18 +325,18 @@ if edited_weights:
     sim_points, excluded = simulate_weighted_performance(weighted_assets)
     if sim_points:
         df_sim = pd.DataFrame(sim_points)
-        df_sim["série"] = "Simulado (pesos ajustados)"
+        df_sim["series"] = "Simulated (adjusted weights)"
         perf_frames.append(df_sim)
         if excluded:
             st.caption(
-                "Excluídos da simulação por falta de preço histórico: "
+                "Excluded from the simulation for lack of historical price: "
                 + ", ".join(str(a) for a in excluded)
             )
     else:
         st.caption(
-            "Não foi possível simular performance com os pesos ajustados — "
-            "nenhum dos ativos dessa alocação tem preço histórico disponível "
-            "na fonte usada (DefiLlama)."
+            "Could not simulate performance with the adjusted weights — "
+            "none of this allocation's assets has historical price "
+            "available in the source used (DefiLlama)."
         )
 
 if perf_frames:
@@ -344,34 +345,34 @@ if perf_frames:
         df_perf_all,
         x="date",
         y="percent_change",
-        color="série",
-        title="Retorno acumulado (%) — real vs. simulado",
-        labels={"date": "Data", "percent_change": "Retorno acumulado (%)"},
+        color="series",
+        title="Accumulated return (%) — real vs. simulated",
+        labels={"date": "Date", "percent_change": "Accumulated return (%)"},
     )
     st.plotly_chart(fig_perf, use_container_width=True)
     st.caption(
-        "'Real' usa o método/fonte nativo da plataforma (ver adapter). "
-        "'Simulado' recombina o preço histórico de cada ativo pelos pesos "
-        "ajustados acima — só bate com o 'Real' se os pesos ajustados forem "
-        "iguais aos reais."
+        "'Real' uses the platform's native method/source (see adapter). "
+        "'Simulated' recombines each asset's historical price using the "
+        "weights adjusted above — it only matches 'Real' if the adjusted "
+        "weights equal the real ones."
     )
 
-# --- card comparativo: quem decide + frequência de rebalanceamento --------
+# --- comparative card: who decides + rebalance frequency -------------------
 
-st.markdown("### Comparável entre plataformas: quem decide e com que frequência")
+st.markdown("### Comparable across platforms: who decides and how often")
 st.caption(
-    "Os ativos subjacentes e a curva de preço NÃO são comparáveis diretamente entre "
-    "plataformas — isto aqui é."
+    "The underlying assets and price curve are NOT directly comparable "
+    "across platforms — this is."
 )
 
 col_decision, col_frequency = st.columns(2)
 with col_decision:
-    st.markdown(f"**Quem decide ({platform_name})**")
+    st.markdown(f"**Who decides ({platform_name})**")
     st.write(adapter.DECISION_MAKER)
 with col_frequency:
-    st.markdown("**Frequência de rebalanceamento**")
+    st.markdown("**Rebalance frequency**")
     if history:
         freq = estimate_monthly_frequency(history)
-        st.write(f"~{freq:.1f} eventos/mês" if freq is not None else "Dados insuficientes (histórico curto demais).")
+        st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
     else:
-        st.write("Sem histórico disponível pra estimar.")
+        st.write("No history available to estimate.")
