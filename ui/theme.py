@@ -31,6 +31,8 @@ FONT_FAMILY = (
 )
 MONO_FONT_FAMILY = "SFMono-Regular, Menlo, Consolas, monospace"
 
+DEFAULT_CHART_HEIGHT = 420
+
 PLOTLY_LAYOUT: dict[str, Any] = {
     "paper_bgcolor": SURFACE,
     "plot_bgcolor": SURFACE,
@@ -39,12 +41,16 @@ PLOTLY_LAYOUT: dict[str, Any] = {
     "legend": {"bgcolor": "rgba(0,0,0,0)"},
     "margin": {"l": 40, "r": 20, "t": 40, "b": 30},
     "title": {"font": {"size": 14, "color": TEXT_MUTED}},
+    "height": DEFAULT_CHART_HEIGHT,
 }
 
 
 def apply_chart_theme(fig):
-    """Applies the shared dark layout/colorway to a Plotly figure in place
-    and returns it, so calls can stay inline: `st.plotly_chart(apply_chart_theme(fig))`."""
+    """Applies the shared dark layout/colorway/height to a Plotly figure in
+    place and returns it, so calls can stay inline:
+    `st.plotly_chart(apply_chart_theme(fig))`. Pass `height=` in a
+    subsequent `fig.update_layout` call to override `DEFAULT_CHART_HEIGHT`
+    for a specific chart."""
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=BORDER)
     fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=BORDER)
@@ -52,10 +58,12 @@ def apply_chart_theme(fig):
 
 
 def inject_css() -> None:
-    """Injects app-level CSS: readable sans-serif typography, rounded
-    card-like chart/table surfaces, and address/link styling — on top of the
-    base theme from `.streamlit/config.toml`. Call once, right after
-    `st.set_page_config`."""
+    """Injects app-level CSS: readable sans-serif typography, extra top
+    padding so the header isn't clipped under Streamlit's toolbar, rounded
+    card-like chart/table surfaces (with `overflow: hidden` so the rounded
+    corners actually clip the chart's own background), and address/link
+    styling — on top of the base theme from `.streamlit/config.toml`. Call
+    once, right after `st.set_page_config`."""
     st.markdown(
         f"""
         <style>
@@ -63,7 +71,7 @@ def inject_css() -> None:
             font-family: {FONT_FAMILY};
         }}
         .block-container {{
-            padding-top: 1.5rem;
+            padding-top: 3rem;
             padding-bottom: 2rem;
             max-width: 1200px;
         }}
@@ -75,6 +83,7 @@ def inject_css() -> None:
             border-radius: 12px;
             padding: 0.5rem;
             background-color: {SURFACE};
+            overflow: hidden;
         }}
         .console-header {{
             display: flex;

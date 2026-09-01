@@ -19,7 +19,8 @@ adapter exposes when it can map the asset to a chain:address pair
 recognized by DefiLlama) using the new weights. An asset with no available
 historical price is excluded from the simulation and listed as such, never
 invented. The performance chart (and the comparison overlay) can show
-either an indexed value (base 100) or percent return, via a shared toggle.
+an indexed value (base 100), percent return, or growth of a $10,000 stake,
+via a shared toggle.
 
 Caveat (repeated from the adapter): the underlying assets differ across the
 three platforms (tokenized stocks vs. crypto vs. crypto pools), and the
@@ -47,6 +48,13 @@ load_dotenv()
 
 CACHE_TTL_SECONDS = 300
 SIMULATION_DAYS = 180
+
+# Chart series names — deliberately explicit about what each one is, since
+# "real", "HODL" and "adjusted" can look confusingly similar otherwise (see
+# the "How to read this chart" expander below and docs/rebalancing-simulator.md).
+SERIES_REAL = "Real strategy (with rebalancing)"
+SERIES_HODL = "HODL (real weights, no rebalancing)"
+SERIES_ADJUSTED = "Adjusted buy-and-hold (your weights)"
 
 PLATFORMS = {
     "Glider": glider,
@@ -164,17 +172,38 @@ def simulate_weighted_performance(
     return points, excluded
 
 
+CHART_MODES = ["Indexed value", "Percent return", "Growth of $10k"]
+GROWTH_BASE_USD = 10_000.0
+
+
 def to_display_series(df: pd.DataFrame, chart_mode: str) -> pd.DataFrame:
-    """Converts a {"percent_change", ...} frame into the active chart mode:
-    "Indexed value" (base 100 at each series' first point, `percent_change`
-    already is relative to that same first point) or "Percent return"
-    (`percent_change` as-is)."""
+    """Converts a {"percent_change", ...} frame into the active chart mode
+    (one of CHART_MODES), all derived from `percent_change` — each series'
+    return since its own first point, never a new data source:
+
+    - "Indexed value": base 100 at each series' first point.
+    - "Percent return": `percent_change` as-is.
+    - "Growth of $10k": what a $10,000 stake would be worth, e.g. a 10%
+      return renders as $11,000, a -10% return as $9,000.
+    """
     df = df.copy()
     if chart_mode == "Indexed value":
         df["display_value"] = 100.0 + df["percent_change"]
+    elif chart_mode == "Growth of $10k":
+        df["display_value"] = GROWTH_BASE_USD * (1.0 + df["percent_change"] / 100.0)
     else:
         df["display_value"] = df["percent_change"]
     return df
+
+
+def chart_mode_axis_label(chart_mode: str) -> str:
+    """Y-axis label for the active chart mode, shared by every chart that
+    uses `to_display_series`."""
+    if chart_mode == "Indexed value":
+        return "Indexed value (base 100)"
+    if chart_mode == "Growth of $10k":
+        return "Growth of $10,000"
+    return "Accumulated return (%)"
 
 
 # --- UI ----------------------------------------------------------------
@@ -244,197 +273,228 @@ else:
             f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
         )
 
-# --- primary workspace: allocation editor (left) + live performance chart (right) ---
+# --- allocation editor ------------------------------------------------------
 
 allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
 
 edited_weights: dict[str, float] = {}
+real_weights: dict[str, float] = {}
 price_refs: dict[str, str | None] = {}
+display_labels: dict[str, str] = {}
 
-chart_mode = st.radio(
-    "Chart mode",
-    ["Indexed value", "Percent return"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
+st.subheader("Allocation")
+if allocation_error:
+    st.error(allocation_error)
+elif not allocation:
+    st.info("No allocation returned by the data source.")
+else:
+    price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
+    display_labels = {row["asset"]: (row.get("display_asset") or row["asset"]) for row in allocation}
 
-workspace_left, workspace_right = st.columns([2, 3])
+    def _label_markup(row: dict) -> str:
+        """Human-readable label first; token address/explorer link as
+        secondary metadata, per row's `display_asset`/`explorer_url`
+        (see adapters/pricing.py)."""
+        label = row.get("display_asset") or row["asset"]
+        markup = f"**{label}**"
+        if row.get("explorer_url"):
+            markup += f" [↗]({row['explorer_url']})"
+        return markup
 
-with workspace_left:
-    st.subheader("Allocation")
-    if allocation_error:
-        st.error(allocation_error)
-    elif not allocation:
-        st.info("No allocation returned by the data source.")
+    with st.expander("Methodology"):
+        st.caption(
+            "Adjust each asset's concentration — the sliders start at the real "
+            "weights. Moving one asset proportionally rescales the others so "
+            "the total always stays at 100%. The simulated performance curve "
+            "below uses these weights."
+        )
+
+    def _slider_key(asset: str) -> str:
+        return f"w::{platform_name}::{basket_id}::{asset}"
+
+    def _history_key() -> str:
+        return f"prev_w::{platform_name}::{basket_id}"
+
+    real_weights = {row["asset"]: round(row["weight_pct"], 1) for row in allocation}
+    history_key = _history_key()
+    reset_clicked = st.button("Reset to real weights")
+
+    if reset_clicked or history_key not in st.session_state:
+        committed = dict(real_weights)
     else:
-        price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
-        display_labels = {row["asset"]: (row.get("display_asset") or row["asset"]) for row in allocation}
-
-        def _label_markup(row: dict) -> str:
-            """Human-readable label first; token address/explorer link as
-            secondary metadata, per row's `display_asset`/`explorer_url`
-            (see adapters/pricing.py)."""
-            label = row.get("display_asset") or row["asset"]
-            markup = f"**{label}**"
-            if row.get("explorer_url"):
-                markup += f" [↗]({row['explorer_url']})"
-            return markup
-
-        with st.expander("Methodology"):
-            st.caption(
-                "Adjust each asset's concentration — the sliders start at the real "
-                "weights. Moving one asset proportionally rescales the others so "
-                "the total always stays at 100%. The simulated performance curve "
-                "on the right uses these weights."
-            )
-
-        def _slider_key(asset: str) -> str:
-            return f"w::{platform_name}::{basket_id}::{asset}"
-
-        def _history_key() -> str:
-            return f"prev_w::{platform_name}::{basket_id}"
-
-        real_weights = {row["asset"]: round(row["weight_pct"], 1) for row in allocation}
-        history_key = _history_key()
-        reset_clicked = st.button("Reset to real weights")
-
-        if reset_clicked or history_key not in st.session_state:
-            committed = dict(real_weights)
+        prev_committed = st.session_state[history_key]
+        pending = {
+            asset: st.session_state.get(_slider_key(asset), prev_committed.get(asset, real))
+            for asset, real in real_weights.items()
+        }
+        changed = [
+            asset
+            for asset, value in pending.items()
+            if abs(value - prev_committed.get(asset, value)) > 1e-9
+        ]
+        if len(changed) == 1:
+            # Proportional rebalance: the dragged asset keeps its new
+            # value; every other asset is scaled to fill the remaining
+            # percentage, preserving their relative proportions — so the
+            # sum always stays at 100% without a separate normalization
+            # step (see docs/rebalancing-simulator.md).
+            changed_asset = changed[0]
+            new_value = max(0.0, min(100.0, pending[changed_asset]))
+            others = [a for a in pending if a != changed_asset]
+            remaining = 100.0 - new_value
+            prev_others_total = sum(prev_committed.get(a, 0.0) for a in others)
+            committed = {changed_asset: new_value}
+            if prev_others_total > 0:
+                for a in others:
+                    committed[a] = prev_committed.get(a, 0.0) / prev_others_total * remaining
+            elif others:
+                equal_share = remaining / len(others)
+                for a in others:
+                    committed[a] = equal_share
         else:
-            prev_committed = st.session_state[history_key]
-            pending = {
-                asset: st.session_state.get(_slider_key(asset), prev_committed.get(asset, real))
-                for asset, real in real_weights.items()
-            }
-            changed = [
-                asset
-                for asset, value in pending.items()
-                if abs(value - prev_committed.get(asset, value)) > 1e-9
-            ]
-            if len(changed) == 1:
-                # Proportional rebalance: the dragged asset keeps its new
-                # value; every other asset is scaled to fill the remaining
-                # percentage, preserving their relative proportions — so the
-                # sum always stays at 100% without a separate normalization
-                # step (see docs/rebalancing-simulator.md).
-                changed_asset = changed[0]
-                new_value = max(0.0, min(100.0, pending[changed_asset]))
-                others = [a for a in pending if a != changed_asset]
-                remaining = 100.0 - new_value
-                prev_others_total = sum(prev_committed.get(a, 0.0) for a in others)
-                committed = {changed_asset: new_value}
-                if prev_others_total > 0:
-                    for a in others:
-                        committed[a] = prev_committed.get(a, 0.0) / prev_others_total * remaining
-                elif others:
-                    equal_share = remaining / len(others)
-                    for a in others:
-                        committed[a] = equal_share
-            else:
-                # 0 or 2+ diffs: basket/platform just switched, or nothing
-                # changed yet — use pending as-is rather than guessing intent.
-                committed = pending
+            # 0 or 2+ diffs: basket/platform just switched, or nothing
+            # changed yet — use pending as-is rather than guessing intent.
+            committed = pending
 
-        for asset, weight in committed.items():
-            st.session_state[_slider_key(asset)] = weight
-        st.session_state[history_key] = dict(committed)
+    for asset, weight in committed.items():
+        st.session_state[_slider_key(asset)] = weight
+    st.session_state[history_key] = dict(committed)
 
-        for row in allocation:
-            asset = row["asset"]
-            label_col, value_col, slider_col = st.columns([2, 1, 5])
-            with label_col:
-                st.markdown(_label_markup(row))
-            with slider_col:
-                st.slider(
-                    str(asset),
-                    min_value=0.0,
-                    max_value=100.0,
-                    step=0.5,
-                    key=_slider_key(asset),
-                    label_visibility="collapsed",
-                )
-            with value_col:
-                st.markdown(f"`{committed[asset]:.1f}%`")
+    for row in allocation:
+        asset = row["asset"]
+        label_col, value_col, slider_col = st.columns([2, 1, 5])
+        with label_col:
+            st.markdown(_label_markup(row))
+        with slider_col:
+            st.slider(
+                str(asset),
+                min_value=0.0,
+                max_value=100.0,
+                step=0.5,
+                key=_slider_key(asset),
+                label_visibility="collapsed",
+            )
+        with value_col:
+            st.markdown(f"`{committed[asset]:.1f}%`")
 
-        edited_weights = committed
+    edited_weights = committed
 
-        df_allocation = pd.DataFrame(
-            [
-                {"asset": display_labels.get(asset, asset), "weight_pct": w}
-                for asset, w in edited_weights.items()
-            ]
-        )
-        fig = px.pie(
-            df_allocation,
-            names="asset",
-            values="weight_pct",
-            title="Simulated weight per asset (%)",
-            hole=0.55,
-        )
-        st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
-        st.dataframe(
-            df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
-            use_container_width=True,
-            hide_index=True,
-        )
+    df_allocation = pd.DataFrame(
+        [
+            {"asset": display_labels.get(asset, asset), "weight_pct": w}
+            for asset, w in edited_weights.items()
+        ]
+    )
+    fig = px.pie(
+        df_allocation,
+        names="asset",
+        values="weight_pct",
+        title="Simulated weight per asset (%)",
+        hole=0.55,
+    )
+    st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
+    st.dataframe(
+        df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 # --- performance curve: real vs. simulated with adjusted weights -----------
 
-with workspace_right:
+perf_title_col, perf_control_col = st.columns([3, 2])
+with perf_title_col:
     st.subheader("Performance")
-    performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
-
-    perf_frames = []
-
-    if performance_error:
-        st.error(performance_error)
-    elif performance and performance.get("points"):
-        df_real = pd.DataFrame(performance["points"])
-        df_real["series"] = f"Real ({performance.get('method') or '?'})"
-        perf_frames.append(df_real)
+with perf_control_col:
+    if hasattr(st, "segmented_control"):
+        chart_mode = st.segmented_control(
+            "Chart mode",
+            CHART_MODES,
+            default="Indexed value",
+            label_visibility="collapsed",
+        )
     else:
-        st.info("No real performance data for this basket.")
+        chart_mode = st.radio(
+            "Chart mode",
+            CHART_MODES,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+chart_mode = chart_mode or "Indexed value"
 
-    if edited_weights:
-        weighted_assets = [
-            {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
-            for asset, weight in edited_weights.items()
-        ]
-        sim_points, excluded = simulate_weighted_performance(weighted_assets)
-        if sim_points:
-            df_sim = pd.DataFrame(sim_points)
-            df_sim["series"] = "Simulated (adjusted weights)"
-            perf_frames.append(df_sim)
-            if excluded:
-                st.caption(
-                    "Excluded from the simulation for lack of historical price: "
-                    + ", ".join(str(a) for a in excluded)
-                )
-        else:
+with st.expander("How to read this chart"):
+    st.caption(
+        f"**{SERIES_REAL}** comes straight from the platform's own performance "
+        "source (see adapter) — it reflects whatever rebalancing actually "
+        f"happened on-chain/in the strategy. **{SERIES_HODL}** and "
+        f"**{SERIES_ADJUSTED}** are both computed here by recombining each "
+        "asset's individual historical price (via DefiLlama) — never taken "
+        "from the platform — so an asset with no available price history is "
+        "excluded from both, listed as such, never invented. HODL always "
+        "uses the basket's real current weights, static, regardless of the "
+        "sliders above; Adjusted uses whatever weights the sliders are set "
+        "to right now. With the sliders at their real/reset values, Adjusted "
+        "and HODL use the same weights and should track closely — small "
+        "differences can still appear from excluded assets or data timing."
+    )
+
+performance, performance_error = safe_call(cached_get_performance, platform_name, basket_id)
+
+perf_frames = []
+
+if performance_error:
+    st.error(performance_error)
+elif performance and performance.get("points"):
+    df_real = pd.DataFrame(performance["points"])
+    df_real["series"] = SERIES_REAL
+    perf_frames.append(df_real)
+else:
+    st.info("No real performance data for this basket.")
+
+if real_weights:
+    hodl_assets = [
+        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+        for asset, weight in real_weights.items()
+    ]
+    hodl_points, _hodl_excluded = simulate_weighted_performance(hodl_assets)
+    if hodl_points:
+        df_hodl = pd.DataFrame(hodl_points)
+        df_hodl["series"] = SERIES_HODL
+        perf_frames.append(df_hodl)
+
+if edited_weights:
+    weighted_assets = [
+        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+        for asset, weight in edited_weights.items()
+    ]
+    sim_points, excluded = simulate_weighted_performance(weighted_assets)
+    if sim_points:
+        df_sim = pd.DataFrame(sim_points)
+        df_sim["series"] = SERIES_ADJUSTED
+        perf_frames.append(df_sim)
+        if excluded:
             st.caption(
-                "Could not simulate performance with the adjusted weights — "
-                "none of this allocation's assets has historical price "
-                "available in the source used (DefiLlama)."
+                "Excluded from the simulation for lack of historical price: "
+                + ", ".join(display_labels.get(a, a) for a in excluded)
             )
-
-    if perf_frames:
-        df_perf_all = to_display_series(pd.concat(perf_frames, ignore_index=True), chart_mode)
-        y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
-        fig_perf = px.line(
-            df_perf_all,
-            x="date",
-            y="display_value",
-            color="series",
-            title=f"Performance — real vs. simulated ({chart_mode.lower()})",
-            labels={"date": "Date", "display_value": y_label},
-        )
-        st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
+    else:
         st.caption(
-            "'Real' uses the platform's native method/source (see adapter). "
-            "'Simulated' recombines each asset's historical price using the "
-            "weights adjusted above — it only matches 'Real' if the adjusted "
-            "weights equal the real ones."
+            "Could not simulate performance with the adjusted weights — "
+            "none of this allocation's assets has historical price "
+            "available in the source used (DefiLlama)."
         )
+
+if perf_frames:
+    df_perf_all = to_display_series(pd.concat(perf_frames, ignore_index=True), chart_mode)
+    y_label = chart_mode_axis_label(chart_mode)
+    fig_perf = px.line(
+        df_perf_all,
+        x="date",
+        y="display_value",
+        color="series",
+        title=f"Performance — real vs. HODL vs. adjusted ({chart_mode.lower()})",
+        labels={"date": "Date", "display_value": y_label},
+    )
+    st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
 
 # --- strategy comparison overlay --------------------------------------------
 
@@ -459,7 +519,7 @@ else:
 
     if comparison_frames:
         df_comparison = to_display_series(pd.concat(comparison_frames, ignore_index=True), chart_mode)
-        y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
+        y_label = chart_mode_axis_label(chart_mode)
         fig_comparison = px.line(
             df_comparison,
             x="date",

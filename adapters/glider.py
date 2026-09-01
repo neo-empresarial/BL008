@@ -274,13 +274,19 @@ def _short_address(address: str) -> str:
     return f"{address[:6]}…{address[-4:]}"
 
 
-def _display_asset(asset_id: str | None) -> str:
+def _display_asset(asset_id: str | None, price_ref: str | None) -> str:
     """Best-effort human-readable label for a CAIP-19 assetId.
 
     The Glider API doesn't return a token symbol alongside assetId, so we
-    fall back to a truncated address rather than showing the full
-    'eip155:1/erc20:0x...' string as the primary label.
+    try resolving one from `price_ref` via `pricing.resolve_token_symbol`
+    (DefiLlama) first. When that fails (no price_ref, network error, or the
+    source has no symbol for it) we fall back to a truncated address rather
+    than showing the full 'eip155:1/erc20:0x...' string as the primary
+    label — never a guessed or invented name.
     """
+    symbol = pricing.resolve_token_symbol(price_ref)
+    if symbol:
+        return symbol
     if not asset_id:
         return "—"
     if "/" in asset_id:
@@ -300,9 +306,11 @@ def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
 
     Also includes optional display metadata (`display_asset`, `token_address`,
     `chain`, `explorer_url`) derived from the same CAIP-19 assetId, so the UI
-    can show something more readable than the raw identifier. `asset` itself
-    is unchanged (still the raw assetId) for backward compatibility with
-    code that keys off it.
+    can show something more readable than the raw identifier — `display_asset`
+    prefers a resolved token symbol (see `_display_asset`) and only falls
+    back to a truncated address when no symbol could be resolved. `asset`
+    itself is unchanged (still the raw assetId) for backward compatibility
+    with code that keys off it.
     """
     rows = []
     for a in get_target_allocation(strategy_id):
@@ -313,7 +321,7 @@ def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
                 "asset": a["asset"],
                 "weight_pct": a["weight"],
                 "price_ref": price_ref,
-                "display_asset": _display_asset(a["asset"]),
+                "display_asset": _display_asset(a["asset"], price_ref),
                 "token_address": token_address or None,
                 "chain": chain,
                 "explorer_url": pricing.price_ref_to_explorer_url(price_ref),
