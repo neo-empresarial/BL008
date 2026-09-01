@@ -9,8 +9,10 @@ layout to make side-by-side comparison easier.
 ## What the MVP does
 
 - Lets you choose the platform (Glider / Reserve Protocol / QuantAMM-Balancer)
-  and an example basket from each one (plus a field to paste another
-  `basket_id` manually).
+  and a basket/strategy from a live-discovered list for that platform (a few
+  curated examples pinned at the top, plus every other basket the platform's
+  discovery API/subgraph returns — see "Discovery" below), or paste another
+  `basket_id` manually.
 - Shows the current target allocation (pie chart + table, weight per asset)
   with a **slider per asset to simulate "what if I weighted it
   differently"** — e.g. changing Mag7 from equal-weight (100/7 each) to any
@@ -31,14 +33,28 @@ layout to make side-by-side comparison easier.
   weights you adjusted on the sliders. An asset with no historical price
   available is excluded from the simulation and listed as such — never
   invented.
-- Shows TVL when available: per-strategy on Glider (via discovery);
-  aggregated by entire protocol via DefiLlama on Reserve and QuantAMM
-  (these two don't expose per-basket TVL in the public sources used here).
+- Shows TVL when available: per-strategy on Glider and per-pool on QuantAMM
+  (both from their own discovery source); Reserve's public subgraph has no
+  TVL field, so it falls back to the entire protocol's aggregated TVL via
+  DefiLlama, clearly labeled as a cross-check, not a per-basket number.
 - Comparative card across all three platforms: **who decides** a rebalance
   (governance / provider API key / autonomous ML signal) and the estimated
   **rebalance frequency** (events/month) — this is the metric that's
   actually comparable side by side, unlike the price curve or the
   underlying assets (tokenized stocks vs. crypto vs. crypto pools).
+
+## Discovery
+
+Every basket select (main picker and the comparison multi-select) is
+populated from each platform's own discovery source, cached for an hour:
+
+- **Glider** — `discover_strategies` on the `"curated"` collection (requires `GLIDER_API_KEY`).
+- **Reserve** — the Goldsky Index DTF subgraph, across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) aren't in this subgraph and never appear here, even though one is pinned as an example to show the composition-unavailable limitation.
+- **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]`, across every chain in `CHAIN_TO_DEFILLAMA`.
+
+If discovery fails or returns nothing for a platform, the select falls back
+to that platform's pinned `EXAMPLE_BASKETS` with a warning explaining why —
+manual `basket_id` entry always stays available regardless.
 
 ## What's missing (out of scope for this MVP)
 
@@ -50,12 +66,10 @@ layout to make side-by-side comparison easier.
 - Direct link between a Reserve `Rebalance` and the governance proposal
   that approved it (there's no FK between the two entities in the public
   subgraph — see TODO in `adapters/reserve.py`).
-- Per-basket TVL on Reserve and QuantAMM (we only have aggregated protocol
-  TVL via DefiLlama).
-- Free-exploration dropdown via Glider's discovery (`GET
-  /discovery/strategies`) — the adapter already supports it
-  (`glider.discover_strategies`), it just doesn't have its own selector in
-  the UI yet.
+- Per-basket TVL on Reserve (its public subgraph has no TVL field — only
+  the aggregated protocol TVL via DefiLlama is available there).
+- Search/filter on the basket select — with hundreds of discovered baskets
+  on some platforms (Reserve in particular), the list is long and plain.
 - Any write operation (create strategy, enroll, withdraw, vote) — this app
   is read-only across all three platforms.
 
