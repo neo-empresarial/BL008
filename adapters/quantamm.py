@@ -9,6 +9,7 @@ adapters/reserve.py — all return exactly these shapes):
 - get_rebalance_history(basket_id) -> list[{"date": str ISO, "description": str,
     "weights_after": list[{"asset","weight_pct"}] | None}]
 - get_performance(basket_id) -> {"method": str, "points": [{"date", "percent_change"}]}
+- discover_baskets() -> list[{"basket_id", "name", "tvl_usd", "chain"}]
 
 No function here uses Streamlit — caching is the caller's responsibility (see
 app.py, `st.cache_data`).
@@ -151,6 +152,63 @@ def _fetch_pool(chain: str, address: str) -> dict[str, Any]:
     if not pool:
         raise QuantAMMAPIError(f"Pool '{address}' not found on chain {chain}.")
     return pool
+
+
+_POOLS_QUERY = """
+query ListQuantAmmPools($chains: [GqlChain!]!, $first: Int!, $skip: Int!) {
+  poolGetPools(
+    first: $first
+    skip: $skip
+    where: { chainIn: $chains, poolTypeIn: [QUANT_AMM_WEIGHTED], protocolVersionIn: [3] }
+  ) {
+    address
+    chain
+    name
+    dynamicData { totalLiquidity }
+  }
+}
+"""
+
+_DISCOVERY_PAGE_SIZE = 200
+
+
+def discover_baskets() -> list[dict[str, Any]]:
+    """Lists every QuantAMM pool (`poolTypeIn: [QUANT_AMM_WEIGHTED]`,
+    Balancer v3 only) across every chain in CHAIN_TO_DEFILLAMA, via the same
+    Balancer GraphQL API `_fetch_pool` uses — paginated with `skip` until a
+    page comes back short.
+
+    Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by TVL
+    descending (ties/missing TVL fall back to name). `tvl_usd` comes from
+    `dynamicData.totalLiquidity` (per-pool, more precise than the
+    protocol-wide DefiLlama cross-check in `get_tvl_usd_defillama`).
+    """
+    rows: list[dict[str, Any]] = []
+    skip = 0
+    while True:
+        data = _graphql(
+            _POOLS_QUERY,
+            {"chains": list(CHAIN_TO_DEFILLAMA.keys()), "first": _DISCOVERY_PAGE_SIZE, "skip": skip},
+        )
+        page = data.get("poolGetPools") or []
+        for pool in page:
+            liquidity = pool.get("dynamicData") or {}
+            try:
+                tvl_usd = float(liquidity["totalLiquidity"])
+            except (KeyError, TypeError, ValueError):
+                tvl_usd = None
+            rows.append(
+                {
+                    "basket_id": f"{pool['chain']}:{pool['address']}",
+                    "name": pool.get("name") or pool["address"],
+                    "tvl_usd": tvl_usd,
+                    "chain": pool["chain"],
+                }
+            )
+        if len(page) < _DISCOVERY_PAGE_SIZE:
+            break
+        skip += _DISCOVERY_PAGE_SIZE
+    return sorted(rows, key=lambda r: (-(r["tvl_usd"] or 0.0), r["name"]))
 
 
 def get_current_allocation(basket_id: str) -> list[dict[str, Any]]:
