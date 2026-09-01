@@ -28,7 +28,14 @@ weights. Invariants:
 ## Surface
 
 `app.py` is the entrypoint (`streamlit run app.py`), single page, no
-routing. Its behavior is driven entirely by sidebar selections.
+routing. Its behavior is driven entirely by sidebar selections. The sidebar
+acts as the control panel (platform and basket pickers); the main area
+shows a compact console header (platform badge, basket id) followed by four
+tabs — Allocation, History, Performance, Protocol — one per data block
+described below. `.streamlit/config.toml` sets the base dark theme;
+`ui/theme.py` layers app-level CSS (header, badges, spacing) and a shared
+Plotly layout/colorway applied to every chart via `theme.apply_chart_theme`.
+Neither file touches data or adapter logic.
 
 ### Adapter interface (implemented identically by all three adapters)
 
