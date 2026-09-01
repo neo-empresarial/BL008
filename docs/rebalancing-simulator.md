@@ -2,15 +2,16 @@
 
 This document covers the Streamlit app in `app.py` and its `adapters/`
 package: how the platform/basket selection, allocation, rebalance history,
-performance and weight-simulation flows work today. It describes the
-feature as it currently behaves, not how it was built.
+performance, weight-simulation and strategy-comparison flows work today. It
+describes the feature as it currently behaves, not how it was built.
 
 ## What this is
 
 A read-only Streamlit MVP that compares real on-chain basket rebalancing
 across three platforms — Glider, Reserve Protocol, QuantAMM/Balancer — side
-by side, and lets the user re-simulate performance under different asset
-weights. Invariants:
+by side, lets the user re-simulate performance under different asset
+weights, and overlays the real performance of multiple example strategies
+across platforms. Invariants:
 
 - Each platform is accessed through an **adapter** (`adapters/glider.py`,
   `adapters/reserve.py`, `adapters/quantamm.py`) that implements the exact
@@ -23,38 +24,57 @@ weights. Invariants:
 - The underlying assets and REAL performance curves are **not** comparable
   across platforms (different asset classes, different weight semantics).
   The one metric that is comparable is who decides a rebalance and how
-  often it happens — shown in a dedicated card.
+  often it happens — shown in the protocol details section. The comparison
+  overlay plots real performance side by side anyway, with a visible note
+  that methodologies differ.
 
 ## Surface
 
 `app.py` is the entrypoint (`streamlit run app.py`), single page, no
-routing. Its behavior is driven entirely by sidebar selections. The sidebar
-acts as the control panel (platform and basket pickers); the main area
-shows a compact console header (platform badge, basket id) followed by four
-tabs — Allocation, History, Performance, Protocol — one per data block
-described below. `.streamlit/config.toml` sets the base dark theme;
-`ui/theme.py` layers app-level CSS (header, badges, spacing) and a shared
-Plotly layout/colorway applied to every chart via `theme.apply_chart_theme`.
+routing, no tabs. Its behavior is driven entirely by sidebar selections.
+
+- **Sidebar** — platform picker, basket picker (example dropdown or manual
+  `basket_id`), and a compact multi-select to pick strategies for the
+  comparison overlay (`<Platform> / <example label>` options built from
+  every adapter's `EXAMPLE_BASKETS`).
+- **Header** — compact console header (platform badge, basket id).
+- **Chart mode toggle** — `st.radio`, "Indexed value" (default) or "Percent
+  return", shared by both the active-strategy performance chart and the
+  comparison overlay chart.
+- **Primary workspace** — two columns: allocation editor on the left
+  (sliders, donut chart, table), live performance chart (real vs.
+  simulated) on the right. Both react to the same selections without a
+  page reload.
+- **Strategy comparison** — below the workspace; renders only when the
+  sidebar multi-select has at least one entry.
+- **Secondary sections** — `st.expander("Rebalance history")` and
+  `st.expander("Protocol details")` (who decides + rebalance frequency),
+  collapsed by default, below the comparison section.
+
+`.streamlit/config.toml` sets the base dark theme (sans-serif, minimal
+palette); `ui/theme.py` layers app-level CSS (header, badges, rounded
+card-like chart/table surfaces, address/link styling) and a shared Plotly
+layout/colorway applied to every chart via `theme.apply_chart_theme`.
 Neither file touches data or adapter logic.
 
 ### Adapter interface (implemented identically by all three adapters)
 
 | Function | Returns |
 |---|---|
-| `get_current_allocation(basket_id)` | `list[{"asset": str, "weight_pct": float, "price_ref": str \| None}]` |
+| `get_current_allocation(basket_id)` | `list[dict]` — see Data shapes below |
 | `get_rebalance_history(basket_id)` | `list[{"date": str \| None, "description": str, "weights_after": list[{"asset","weight_pct"}]}]` |
 | `get_performance(basket_id)` | `{"method": str \| None, "points": list[{"date": str, "percent_change": float \| None}]}` |
 | `get_tvl_usd_defillama()` | `float \| None` — **absent on `glider`**, present on `reserve` and `quantamm` |
 
 Each adapter module also exports:
 
-- `EXAMPLE_BASKETS: dict[str, str]` — label → `basket_id`, used to populate the sidebar dropdown.
-- `DECISION_MAKER: str` — one sentence, shown in the "who decides" card.
+- `EXAMPLE_BASKETS: dict[str, str]` — label → `basket_id`, used to populate both the sidebar basket dropdown and the comparison multi-select.
+- `DECISION_MAKER: str` — one sentence, shown in the protocol details section.
 - An exception class (`GliderAPIError`, `ReserveAPIError`, `QuantAMMAPIError`), all subclasses of `Exception` with a readable `str()`.
 
 Glider additionally exposes `discover_strategies(collection="curated", sort=None, limit=50) -> list[dict]` (used only for TVL/wallet-count lookup, not for the basket selector) and the lower-level `get_target_allocation` / `get_version_history` that `get_current_allocation` / `get_rebalance_history` wrap.
 
-`adapters/pricing.py` exposes `get_price_history(price_ref, days=180) -> list[{"timestamp": int, "price": float}]` and `caip19_to_price_ref(asset_id) -> str | None`, shared by all three adapters and by `app.py`'s simulation.
+`adapters/pricing.py` exposes `get_price_history(price_ref, days=180) -> list[{"timestamp": int, "price": float}]`, `caip19_to_price_ref(asset_id) -> str | None`, and `price_ref_to_explorer_url(price_ref) -> str | None` — all shared by the three adapters and/or by `app.py`.
 
 ### `basket_id` format per platform
 
@@ -66,6 +86,33 @@ Glider additionally exposes `discover_strategies(collection="curated", sort=None
 
 ## Data shapes
 
+`get_current_allocation` rows carry the core fields plus optional display
+metadata:
+
+```python
+{
+    "asset": "WETH",              # stable identifier — never changes meaning
+    "weight_pct": 42.5,           # 0-100 float, see below
+    "price_ref": "ethereum:0x...",       # or None
+    "display_asset": "WETH",             # human-readable label; falls back to `asset`-equivalent text
+    "token_address": "0x...",            # or None
+    "chain": "ethereum",                 # DefiLlama chain slug, or None
+    "explorer_url": "https://etherscan.io/token/0x...",  # or None
+}
+```
+
+`asset` is always present and is what internal code (slider keys, weight
+lookups, simulation matching) keys off — it never changes shape for
+backward compatibility. `display_asset`/`token_address`/`chain`/
+`explorer_url` are presentation-only and may be `None`; UI code prefers
+`display_asset` when present and falls back to `asset` otherwise (see
+`app.py`'s `_label_markup`). For Glider, `asset` is the raw CAIP-19
+assetId (used as the simulation/session-state key) while `display_asset`
+is a truncated address (`0x1234…abcd`) because the Glider API doesn't
+return a token symbol; for Reserve and QuantAMM, `asset` and
+`display_asset` are the same value (the token symbol, or the raw address
+when no symbol is available).
+
 `weight_pct` is always a **0–100 float**, already normalized per basket by
 the adapter (never a 0–1 fraction, even though some upstream APIs use one —
 e.g. QuantAMM's `poolTokens[].weight` is 0–1 and gets multiplied by 100
@@ -74,7 +121,8 @@ before it leaves the adapter).
 `price_ref`, when present, is a DefiLlama coin key: `"<chain-slug>:<address>"`
 (e.g. `"ethereum:0xabc..."`). It is `None` whenever the asset couldn't be
 mapped to a chain/address DefiLlama recognizes — this is expected and
-common, not an error.
+common, not an error. `token_address`/`chain`/`explorer_url` are derived
+from the same mapping and are `None` together whenever `price_ref` is.
 
 `get_performance` points use `percent_change` as **accumulated return since
 the first point**, not period-over-period return. `date` is an ISO 8601
@@ -83,19 +131,35 @@ it's whatever the API returns as-is.
 
 Simulated performance points (built by `app.py`'s
 `simulate_weighted_performance`) use the same `{"date", "percent_change"}`
-shape so both series can be concatenated into one chart.
+shape so both series can be concatenated into one chart. `app.py`'s
+`to_display_series` then derives a `display_value` column from
+`percent_change` depending on the active chart mode: `100 + percent_change`
+for "Indexed value" (base 100 at each series' own first point), or
+`percent_change` unchanged for "Percent return".
 
 ## Rules and behavior
 
-**Allocation sliders.** On first render for a given (platform, basket,
-asset) combination, the slider is seeded from the real `weight_pct`
-(rounded to 1 decimal) and cached in `st.session_state` under key
-`w::{platform}::{basket_id}::{asset}` — moving other sliders doesn't reset
-it. "Reset to real weights" overwrites every slider's session-state entry
-back to the real values. Whatever the raw slider values sum to, they are
-renormalized to sum to 100% before being used anywhere else (chart, table,
-simulation); if every slider is at 0, normalization is skipped and the raw
-(all-zero) weights are used as-is.
+**Proportional allocation rebalancing.** Each basket's committed weights
+are tracked in `st.session_state["prev_w::{platform}::{basket_id}"]`. On
+each rerun, `app.py` compares each slider's pending value (from
+`st.session_state`) against that basket's last committed weights:
+
+- **0 or 2+ assets differ** (basket/platform just switched, or first
+  render) — the pending values are used as-is (i.e. the real weights on
+  first load).
+- **Exactly 1 asset differs** (the normal case — the user dragged one
+  slider) — that asset keeps its new value; every other asset is scaled
+  proportionally, by its share of the *previous* total of the other
+  assets, to fill the remaining percentage. If the changed asset moves to
+  100%, all others become 0%. If it moves to 0% and the others' previous
+  total was 0 too (edge case), the remaining percentage is split equally
+  among them instead of dividing by zero.
+
+The committed weights are written back into each slider's session-state
+entry before the sliders are instantiated, so the UI always displays
+already-rebalanced values — there is no separate "raw sum → normalize"
+step or caption; the total is 100% by construction after every edit and
+after "Reset to real weights".
 
 **Weighted simulation.** For each asset with a `price_ref`, its full daily
 price history (`SIMULATION_DAYS` = 180 days) is fetched, forward/backward
@@ -105,6 +169,12 @@ weights renormalized **only across the included assets** (i.e. an asset
 with no price data doesn't just get a 0 weight — its weight is redistributed
 to the rest). If zero assets have a usable price, simulation is skipped
 entirely (no chart series is added, only a caption explaining why).
+
+**Chart mode.** The `st.radio` toggle ("Indexed value" default, "Percent
+return") drives both the active-strategy performance chart and the
+comparison overlay — both call the same `to_display_series` helper and
+share one `chart_mode` value, so switching the toggle updates both charts
+identically.
 
 **TVL display.**
 - Glider: comes from `discover_strategies("curated")` cross-referenced by
@@ -119,19 +189,30 @@ dated history events to compute anything; it divides event count by
 `(date span in days) / 30`. A single event, or a zero/negative span
 (duplicate timestamps), returns `None` → UI shows "insufficient data".
 
+**Strategy comparison overlay.** For each selected `<Platform> / <label>`
+entry, `app.py` calls that platform's `get_performance` through
+`safe_call`. A failure (adapter error, or no `points` returned) renders a
+`st.warning` naming that one entry and is skipped — it never prevents the
+other selected strategies from rendering. Each successful series keeps its
+raw `percent_change` (i.e. its own return since its own first data point);
+there is no cross-strategy date alignment or rebasing beyond what
+`to_display_series` does per series independently.
+
 **Error isolation.** Every external call in `app.py` goes through
 `safe_call`, which catches `Exception` broadly and turns it into
 `(None, str(exc))`. This is intentional (see `safe_call`'s own docstring)
-so one broken section (e.g. Reserve's Yield DTF composition) never takes
-down the rest of the page.
+so one broken section (e.g. Reserve's Yield DTF composition, or one failed
+comparison entry) never takes down the rest of the page.
 
 ## What this does NOT do
 
 - No write operations anywhere — no enroll, mint/redeem, vote, or strategy
   creation, on any of the three platforms.
 - No cross-platform performance comparison claim — the "Real" curves from
-  different platforms are never presented as equivalent; only the
-  decision-maker/frequency card is framed as comparable.
+  different platforms are never presented as methodologically equivalent;
+  the comparison overlay carries an explicit caption saying so, and the
+  one metric framed as directly comparable is who decides a rebalance and
+  how often (protocol details section).
 - No per-basket TVL for Reserve or QuantAMM — only protocol-wide TVL via
   DefiLlama exists for those two (see Rules and behavior above).
 - No governance-proposal linkage for Reserve rebalances — the subgraph has
@@ -144,19 +225,32 @@ down the rest of the page.
 - No free-exploration UI for Glider's `discover_strategies` — the function
   exists and is used internally for TVL lookup, but there's no dropdown to
   browse the full curated collection.
+- No real token symbol lookup for Glider — `display_asset` there is a
+  truncated address, not a fetched/guessed symbol; the adapter never
+  invents a name it wasn't given.
+- No date alignment across comparison-overlay series — each strategy's
+  points are plotted on its own native date range; overlapping ranges are
+  a coincidence of the underlying data, not something the app enforces.
 - Historical price gaps are filled (`ffill`/`bfill`) for chart continuity,
   but no price is ever fabricated for an asset that has zero price history
   — that asset is excluded from the simulation, not interpolated into it.
 
 ## Gotchas
 
-- **A basket with all sliders at 0% shows a simulation with no
-  normalization applied.** Symptom: the pie chart and table show 0% for
-  everything instead of an error. Cause: `total_raw <= 0` skips
-  renormalization by design (see Rules and behavior). Fix: not a bug —
-  drag at least one slider above 0.
+- **Dragging a slider snaps it to a rebalanced value, not the exact value
+  you released it at (unless it's the one you dragged).** Symptom: moving
+  asset A's slider visibly moves every other slider too. Cause: proportional
+  rebalancing is intentional (see Rules and behavior) — the changed slider
+  keeps your value, the rest are recalculated and written back into
+  `st.session_state` before being displayed.
+- **Switching platform or basket silently resets weights to real, without
+  the "0 or 2+ diffs" branch feeling like a reset.** Symptom: no rebalance
+  math applied. Cause: `prev_w::{platform}::{basket_id}` is keyed per
+  basket, so a new basket has no prior committed state and the diff check
+  naturally finds 0 changed assets, short-circuiting straight to "use
+  pending/real as-is".
 - **An asset can visibly have a real weight but never appear in the
-  simulated curve.** Symptom: pie/table show the asset, but it's absent
+  simulated curve.** Symptom: donut/table show the asset, but it's absent
   (and listed under "Excluded") from the "Simulated" performance line.
   Cause: `price_ref` is `None` (non-EVM asset, or chain outside
   `EIP155_TO_DEFILLAMA`/`CHAIN_TO_DEFILLAMA`) or DefiLlama has no price for
@@ -178,8 +272,14 @@ down the rest of the page.
   itself may load fine elsewhere on the page.
 - **`GLIDER_API_KEY` missing doesn't crash the app.** Selecting Glider
   without the key configured shows a contained `st.error` from
-  `GliderAPIError` in each affected section; Reserve and QuantAMM remain
-  fully usable in the same session.
+  `GliderAPIError` in each affected section (including any Glider entry
+  picked for comparison, via a `st.warning` there instead); Reserve and
+  QuantAMM remain fully usable in the same session.
+- **The comparison overlay's "Indexed value" mode rebases each series to
+  its own first point, not to a shared start date.** Two overlaid series
+  with different history lengths will both start at 100 even though their
+  real calendar start dates differ — read the x-axis dates, not just the
+  visual alignment at the left edge.
 
 ## Setup
 
