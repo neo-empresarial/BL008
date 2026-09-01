@@ -1,68 +1,68 @@
-# BL008 — Simulador de Rebalanceamento (MVP)
+# BL008 — Rebalancing Simulator (MVP)
 
-MVP em Streamlit pra comparar o comportamento real de rebalanceamento entre
-plataformas de cestas on-chain (index baskets): **Glider**, **Reserve
-Protocol** e **QuantAMM/Balancer**. As três estão implementadas e plugadas
-num seletor de plataforma que troca qual adapter é usado, mantendo o mesmo
-layout pra facilitar a comparação lado a lado.
+Streamlit MVP to compare real rebalancing behavior across on-chain basket
+(index basket) platforms: **Glider**, **Reserve Protocol** and
+**QuantAMM/Balancer**. All three are implemented and plugged into a
+platform selector that swaps which adapter is used, keeping the same
+layout to make side-by-side comparison easier.
 
-## O que o MVP faz
+## What the MVP does
 
-- Deixa escolher a plataforma (Glider / Reserve Protocol / QuantAMM-Balancer)
-  e um basket de exemplo de cada uma (mais um campo pra colar outro
-  `basket_id` manualmente).
-- Mostra a alocação-alvo atual (pizza + tabela, peso por ativo) com um
-  **slider por ativo pra simular "e se eu pesasse diferente"** — ex: mudar a
-  Mag7 de equal-weight (100/7 cada) pra qualquer outra concentração. Os
-  sliders começam nos pesos reais e são normalizados pra somar 100%; um
-  botão reseta pros pesos reais.
-- Mostra o **histórico de rebalanceamento** — o log real de quando e como
-  cada basket mudou de peso. A natureza desse log é bem diferente em cada
-  plataforma (ver "Sobre cada plataforma" abaixo):
-  - Glider: `changeLog` textual por versão.
-  - Reserve: um Dutch auction por `Rebalance` (nonce, tx hash), aprovado
-    antes via governança.
-  - QuantAMM: snapshots de peso amostrados de uma curva contínua guiada por
-    sinal de ML — sem decisão humana registrada.
-- Mostra a curva de performance (retorno acumulado x data): a curva **Real**
-  (método/fonte nativo de cada plataforma, claramente rotulado — não são
-  comparáveis diretamente entre plataformas) e uma curva **Simulada**, que
-  recombina o preço histórico de cada ativo (via DefiLlama) pelos pesos que
-  você ajustou nos sliders. Ativo sem preço histórico disponível é excluído
-  da simulação e listado como tal — nunca inventado.
-- Mostra TVL quando disponível: por-estratégia na Glider (via discovery);
-  agregado por protocolo inteiro via DefiLlama no Reserve e no QuantAMM
-  (essas duas não expõem TVL por basket individual nas fontes públicas
-  usadas aqui).
-- Card comparável entre as três plataformas: **quem decide** um
-  rebalanceamento (governança / chave de API do provider / sinal de ML
-  autônomo) e a **frequência de rebalanceamento** estimada (eventos/mês) —
-  essa é a métrica que de fato dá pra comparar lado a lado, diferente da
-  curva de preço ou dos ativos subjacentes (ações tokenizadas vs. cripto vs.
-  pools de cripto).
+- Lets you choose the platform (Glider / Reserve Protocol / QuantAMM-Balancer)
+  and an example basket from each one (plus a field to paste another
+  `basket_id` manually).
+- Shows the current target allocation (pie chart + table, weight per asset)
+  with a **slider per asset to simulate "what if I weighted it
+  differently"** — e.g. changing Mag7 from equal-weight (100/7 each) to any
+  other concentration. Sliders start at the real weights and are normalized
+  to sum to 100%; a button resets to the real weights.
+- Shows the **rebalance history** — the real log of when and how each
+  basket's weight changed. The nature of this log is quite different per
+  platform (see "About each platform" below):
+  - Glider: textual `changeLog` per version.
+  - Reserve: one Dutch auction per `Rebalance` (nonce, tx hash), approved
+    beforehand via governance.
+  - QuantAMM: weight snapshots sampled from a continuous curve driven by an
+    ML signal — no recorded human decision.
+- Shows the performance curve (accumulated return x date): the **Real**
+  curve (each platform's native method/source, clearly labeled — not
+  directly comparable across platforms) and a **Simulated** curve, which
+  recombines each asset's historical price (via DefiLlama) using the
+  weights you adjusted on the sliders. An asset with no historical price
+  available is excluded from the simulation and listed as such — never
+  invented.
+- Shows TVL when available: per-strategy on Glider (via discovery);
+  aggregated by entire protocol via DefiLlama on Reserve and QuantAMM
+  (these two don't expose per-basket TVL in the public sources used here).
+- Comparative card across all three platforms: **who decides** a rebalance
+  (governance / provider API key / autonomous ML signal) and the estimated
+  **rebalance frequency** (events/month) — this is the metric that's
+  actually comparable side by side, unlike the price curve or the
+  underlying assets (tokenized stocks vs. crypto vs. crypto pools).
 
-## O que falta (fora do escopo deste MVP)
+## What's missing (out of scope for this MVP)
 
-- Composição e histórico de **Yield DTFs** do Reserve (ex: eUSD) — o
-  subgraph público só cobre Index DTFs; Yield DTFs exigiriam leitura RPC
-  direta do contrato (`BackingManager`), não implementada aqui. O adapter
-  levanta um erro claro em vez de simular esse dado (ver
+- Composition and history of Reserve's **Yield DTFs** (e.g. eUSD) — the
+  public subgraph only covers Index DTFs; Yield DTFs would require direct
+  RPC reads of the contract (`BackingManager`), not implemented here. The
+  adapter raises a clear error instead of simulating this data (see
   `adapters/reserve.py`).
-- Vínculo direto entre um `Rebalance` do Reserve e a proposta de governança
-  que o aprovou (não existe FK entre as duas entidades no subgraph público
-  — ver TODO em `adapters/reserve.py`).
-- TVL por basket individual no Reserve e no QuantAMM (só temos TVL agregado
-  do protocolo via DefiLlama).
-- Dropdown de exploração livre pelo discovery da Glider (`GET
-  /discovery/strategies`) — o adapter já suporta (`glider.discover_strategies`),
-  só não tem um seletor próprio na UI ainda.
-- Qualquer operação de escrita (criar estratégia, enroll, withdraw, votar) —
-  este app é só leitura, nas três plataformas.
+- Direct link between a Reserve `Rebalance` and the governance proposal
+  that approved it (there's no FK between the two entities in the public
+  subgraph — see TODO in `adapters/reserve.py`).
+- Per-basket TVL on Reserve and QuantAMM (we only have aggregated protocol
+  TVL via DefiLlama).
+- Free-exploration dropdown via Glider's discovery (`GET
+  /discovery/strategies`) — the adapter already supports it
+  (`glider.discover_strategies`), it just doesn't have its own selector in
+  the UI yet.
+- Any write operation (create strategy, enroll, withdraw, vote) — this app
+  is read-only across all three platforms.
 
-## Como rodar
+## How to run
 
-1. Python 3.10+ recomendado.
-2. Crie um virtualenv e instale as dependências:
+1. Python 3.10+ recommended.
+2. Create a virtualenv and install dependencies:
 
    ```bash
    python3 -m venv .venv
@@ -70,105 +70,103 @@ layout pra facilitar a comparação lado a lado.
    pip install -r requirements.txt
    ```
 
-3. Copie `.env.example` para `.env` e cole sua API key da Glider (só ela
-   precisa de key — Reserve e QuantAMM usam fontes públicas sem autenticação):
+3. Copy `.env.example` to `.env` and paste your Glider API key (only Glider
+   needs a key — Reserve and QuantAMM use public, unauthenticated sources):
 
    ```bash
    cp .env.example .env
-   # edite .env e preencha GLIDER_API_KEY=...
+   # edit .env and fill in GLIDER_API_KEY=...
    ```
 
-   Peça uma key em <https://console.glidercloud.dev/>. Sem a key, a
-   plataforma Glider mostra um `st.error` claro explicando o que falta —
-   não quebra com traceback, e as outras duas plataformas continuam
-   funcionando normalmente.
+   Request a key at <https://console.glidercloud.dev/>. Without the key,
+   the Glider platform shows a clear `st.error` explaining what's missing
+   — it doesn't break with a raw traceback, and the other two platforms
+   keep working normally.
 
-4. Rode:
+4. Run:
 
    ```bash
    streamlit run app.py
    ```
 
-## Baskets de exemplo
+## Example baskets
 
 - **Glider** — Mag7 (`01KV68M2Y685X59DWAEVX5D5X3`), Nancy Pelosi Tracker
   (`01KWJ0Q9GXP1HBN2Z53RCHCHQW`).
-- **Reserve Protocol** — OPEN, Index DTF em mainnet
-  (`mainnet:0x323c03c48660fe31186fa82c289b0766d331ce21`); LCAP, Index DTF em
+- **Reserve Protocol** — OPEN, Index DTF on mainnet
+  (`mainnet:0x323c03c48660fe31186fa82c289b0766d331ce21`); LCAP, Index DTF on
   base (`base:0x4dA9A0f397dB1397902070f93a4D6ddBC0E0E6e8`); eUSD, Yield DTF
-  em mainnet (`mainnet:0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F` —
-  composição indisponível neste MVP, ver acima).
-- **QuantAMM/Balancer** — Safe Haven BTC:PAXG:USDC em mainnet
+  on mainnet (`mainnet:0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F` —
+  composition unavailable in this MVP, see above).
+- **QuantAMM/Balancer** — Safe Haven BTC:PAXG:USDC on mainnet
   (`MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5`).
 
-## Sobre cada plataforma
+## About each platform
 
 ### Glider
 
-- Base URL: `https://api.glider.fi/v2`. Doc:
+- Base URL: `https://api.glider.fi/v2`. Docs:
   `https://api.glider.fi/v2/llms.txt` / `https://docs.glider.fi/llms.txt`.
   OpenAPI: `https://api.glider.fi/v2/openapi.json`.
-- Autenticação via header `x-api-key` (env var `GLIDER_API_KEY`).
-- Envelope `{"success": true, "data": {...}}` ou `{"success": false, "error": {...}}`
-  — o adapter trata os dois casos e levanta `GliderAPIError` com mensagem
-  legível.
-- Valores monetários e pesos vêm como strings decimais (ex: `"60.00"`) —
-  convertidos com `Decimal`/`float()`, nunca com aritmética direta em string.
-- `allocation.weight` é uma escala 0–100.
+- Authentication via the `x-api-key` header (env var `GLIDER_API_KEY`).
+- `{"success": true, "data": {...}}` or `{"success": false, "error": {...}}`
+  envelope — the adapter handles both cases and raises `GliderAPIError` with
+  a readable message.
+- Monetary values and weights come as decimal strings (e.g. `"60.00"`) —
+  converted with `Decimal`/`float()`, never with direct string arithmetic.
+- `allocation.weight` is on a 0–100 scale.
 
 ### Reserve Protocol
 
-- Não tem uma API B2B pronta como a da Glider. O frontend oficial
-  (`reserve-protocol/register`) consome dois públicos e sem key:
-  - Subgraphs Goldsky (compatíveis com The Graph), um por chain
-    (mainnet/base/bsc), indexando o contrato Folio de cada Index DTF —
-    entidade `Rebalance` é o log real de rebalanceamento (endpoint e schema
-    confirmados nos repositórios `reserve-protocol/register` e
-    `reserve-protocol/dtf-index-subgraph`).
-  - `https://api.llama.fi` (DefiLlama) — TVL do protocolo e preço histórico
-    por token (`coins.llama.fi/chart`), usado aqui como proxy de
-    performance.
-- Pesos vêm como quantidade-alvo bruta on-chain (`weightSpotLimit`), não uma
-  % pronta — normalizamos pela soma pra aproximar peso relativo por
-  quantidade (não por valor em USD). Ver caveats completos em
-  `adapters/reserve.py`.
-- Rebalanceamento é via leilão holandês, aprovado antes por governança —
-  mas não há vínculo direto (FK) entre `Rebalance` e a proposta que o
-  aprovou no schema público.
+- Doesn't have a ready-made B2B API like Glider's. The official frontend
+  (`reserve-protocol/register`) consumes two public, no-key sources:
+  - Goldsky subgraphs (The Graph-compatible), one per chain
+    (mainnet/base/bsc), indexing the Folio contract of each Index DTF —
+    the `Rebalance` entity is the real rebalance log (endpoint and schema
+    confirmed in the `reserve-protocol/register` and
+    `reserve-protocol/dtf-index-subgraph` repos).
+  - `https://api.llama.fi` (DefiLlama) — protocol TVL and historical price
+    per token (`coins.llama.fi/chart`), used here as a performance proxy.
+- Weights come as a raw on-chain target quantity (`weightSpotLimit`), not a
+  ready-made % — we normalize by the sum to approximate relative weight by
+  quantity (not by USD value). See full caveats in `adapters/reserve.py`.
+- Rebalancing is via Dutch auction, approved beforehand by governance —
+  but there's no direct link (FK) between `Rebalance` and the proposal that
+  approved it in the public schema.
 
 ### QuantAMM / Balancer
 
-- Pools QuantAMM são pools nativos do Balancer v3 (tipo
-  `QUANT_AMM_WEIGHTED`) — sem API própria separada.
-- Fonte: API GraphQL pública e sem key da Balancer
-  (`https://api-v3.balancer.fi/graphql`, confirmada por introspecção).
-  `poolTokens[].weight` dá o peso atual; `weightSnapshots` dá uma série
-  temporal real de pesos (amostrada de hora em hora) — é o que vira o
-  "histórico de rebalanceamento"; `poolGetSnapshots.sharePrice` vira a curva
-  de performance.
-- 100% programático: cada mudança de peso é resultado de um sinal de ML
-  aplicado automaticamente on-chain, sem aprovação humana — por isso cada
-  entrada do histórico é rotulada `"signal-driven"`, sem fingir que houve
-  uma decisão registrada como no Reserve.
+- QuantAMM pools are native Balancer v3 pools (type
+  `QUANT_AMM_WEIGHTED`) — no separate API of their own.
+- Source: Balancer's public, no-key GraphQL API
+  (`https://api-v3.balancer.fi/graphql`, confirmed by introspection).
+  `poolTokens[].weight` gives the current weight; `weightSnapshots` gives a
+  real time series of weights (sampled hourly) — this becomes the
+  "rebalance history"; `poolGetSnapshots.sharePrice` becomes the
+  performance curve.
+- 100% programmatic: each weight change is the result of an ML signal
+  applied automatically on-chain, with no human approval — which is why
+  each history entry is labeled `"signal-driven"`, without pretending
+  there was a recorded decision like on Reserve.
 
-## Estrutura
+## Structure
 
 ```
 BL008/
-  app.py                  # Streamlit entrypoint — seletor de plataforma
+  app.py                  # Streamlit entrypoint — platform selector
   adapters/
     __init__.py
-    glider.py              # API da Glider (implementado)
-    reserve.py             # Subgraph Goldsky + DefiLlama (implementado)
-    quantamm.py             # API GraphQL da Balancer (implementado)
-    pricing.py             # preço histórico por ativo (DefiLlama), usado no simulador de pesos
+    glider.py              # Glider API (implemented)
+    reserve.py             # Goldsky subgraph + DefiLlama (implemented)
+    quantamm.py             # Balancer GraphQL API (implemented)
+    pricing.py             # historical price per asset (DefiLlama), used by the weight simulator
   .env.example
   requirements.txt
   README.md
 ```
 
-Cada adapter expõe a mesma interface comum — `get_current_allocation`,
-`get_rebalance_history`, `get_performance`, além de `EXAMPLE_BASKETS` e
-`DECISION_MAKER` — pra permitir o app.py tratar as três plataformas de
-forma genérica (ver docstring de cada arquivo em `adapters/` pros detalhes e
-as aproximações/limitações específicas de cada fonte de dado).
+Each adapter exposes the same common interface — `get_current_allocation`,
+`get_rebalance_history`, `get_performance`, plus `EXAMPLE_BASKETS` and
+`DECISION_MAKER` — to let app.py treat all three platforms generically (see
+each file's docstring in `adapters/` for details and each data source's
+specific approximations/limitations).

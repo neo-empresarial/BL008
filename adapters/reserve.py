@@ -1,56 +1,57 @@
 """
-Adapter para o Reserve Protocol (Index DTFs).
+Adapter for Reserve Protocol (Index DTFs).
 
-Interface comum aos três adapters (ver também adapters/glider.py e
-adapters/quantamm.py — todos retornam exatamente estas formas):
+Interface common to the three adapters (see also adapters/glider.py and
+adapters/quantamm.py — all return exactly these shapes):
 
 - get_current_allocation(basket_id) -> list[{"asset": str, "weight_pct": float}]
 - get_rebalance_history(basket_id) -> list[{"date": str ISO, "description": str,
     "weights_after": list[{"asset","weight_pct"}] | None}]
 - get_performance(basket_id) -> {"method": str, "points": [{"date", "percent_change"}]}
 
-Nenhuma função aqui usa Streamlit — cache fica por conta de quem chama (ver
+No function here uses Streamlit — caching is the caller's responsibility (see
 app.py, `st.cache_data`).
 
-Pesquisa feita (fontes reais, não documentação formal — o Reserve não expõe
-uma API B2B como a da Glider):
+Research done (real sources, not formal documentation — Reserve doesn't
+expose a B2B API like Glider's):
 
-- `https://docs.reserve.org/sitemap.md` mapeia só documentação conceitual
-  (rebalancing, governança, fees) — nenhuma página de API/subgraph pública.
-- O frontend oficial (`reserve-protocol/register` no GitHub) consome dados
-  de duas fontes públicas e sem API key:
-  1. Subgraphs Goldsky (compatíveis com The Graph), um por chain, indexando
-     o contrato Folio de cada Index DTF. Endpoint e nomes de rede
-     confirmados em `e2e/helpers/registry.ts` desse repo:
+- `https://docs.reserve.org/sitemap.md` maps only conceptual documentation
+  (rebalancing, governance, fees) — no public API/subgraph page.
+- The official frontend (`reserve-protocol/register` on GitHub) consumes
+  data from two public sources with no API key:
+  1. Goldsky subgraphs (The Graph-compatible), one per chain, indexing
+     the Folio contract of each Index DTF. Endpoint and network names
+     confirmed in that repo's `e2e/helpers/registry.ts`:
      `https://api.goldsky.com/api/public/project_cmgzim3e100095np2gjnbh6ry/subgraphs/dtf-index-{mainnet,base,bsc}/prod/gn`.
-     O schema (`schema.graphql` em `reserve-protocol/dtf-index-subgraph`)
-     confirma a entidade `Rebalance { nonce, dtf, tokens, weightSpotLimit,
-     timestamp, transactionHash }` — é o **log real de rebalanceamento**
-     (um Dutch auction por rebalance, aprovado antes via governança).
-  2. `https://api.llama.fi` (DefiLlama) — TVL do protocolo agregado
-     (`reserve-protocol`) e preço histórico por token via
-     `https://coins.llama.fi/chart/{chain}:{address}`, usado aqui como fonte
-     de performance (ver get_performance).
+     The schema (`schema.graphql` in `reserve-protocol/dtf-index-subgraph`)
+     confirms the `Rebalance { nonce, dtf, tokens, weightSpotLimit,
+     timestamp, transactionHash }` entity — this is the **real rebalance
+     log** (one Dutch auction per rebalance, approved beforehand via
+     governance).
+  2. `https://api.llama.fi` (DefiLlama) — aggregated protocol TVL
+     (`reserve-protocol`) and historical price per token via
+     `https://coins.llama.fi/chart/{chain}:{address}`, used here as the
+     performance source (see get_performance).
 
-- **Yield DTFs** (ex: eUSD) NÃO têm composição/rebalanceamento nesse mesmo
-  subgraph — o próprio e2e suite do Reserve lê o estado de Yield DTFs via
-  chamadas RPC diretas ao contrato (BackingManager), não via GraphQL.
-  Implementar isso exigiria decodificar ABI on-chain, fora do escopo deste
-  MVP — por isso `get_current_allocation`/`get_rebalance_history` levantam
-  `ReserveAPIError` explicando a limitação para baskets do tipo "yield", em
-  vez de inventar um formato de resposta.
+- **Yield DTFs** (e.g. eUSD) do NOT have composition/rebalancing in this
+  same subgraph — Reserve's own e2e suite reads Yield DTF state via
+  direct RPC calls to the contract (BackingManager), not via GraphQL.
+  Implementing that would require decoding the on-chain ABI, out of scope
+  for this MVP — so `get_current_allocation`/`get_rebalance_history` raise
+  `ReserveAPIError` explaining the limitation for "yield"-type baskets,
+  instead of inventing a response format.
 
-- weightSpotLimit é a quantidade-alvo por unidade de basket (BigInt em
-  ponto fixo on-chain), não uma % pronta. Aqui normalizamos pela soma dos
-  pesos de cada rebalance pra aproximar peso relativo por **quantidade**
-  (não por valor em USD, que exigiria multiplicar por preço de cada ativo —
-  não fazemos essa conversão, para não arriscar produzir um número errado).
+- weightSpotLimit is the target quantity per basket unit (on-chain
+  fixed-point BigInt), not a ready-made %. Here we normalize by the sum of
+  weights per rebalance to approximate relative weight by **quantity**
+  (not by USD value, which would require multiplying by each asset's
+  price — we don't do that conversion, to avoid risking a wrong number).
 
-- Não existe, nesse subgraph, um vínculo direto (chave estrangeira) entre um
-  `Rebalance` e a proposta de governança que o aprovou — só existe
-  `DTF.ownerGovernance.proposals` com texto livre. Por isso `description` no
-  histórico de rebalanceamento não cita a proposta específica; é um TODO
-  documentado abaixo.
+- There's no direct link (foreign key) in this subgraph between a
+  `Rebalance` and the governance proposal that approved it — only
+  `DTF.ownerGovernance.proposals` with free-text. So `description` in the
+  rebalance history doesn't cite the specific proposal; it's a documented
+  TODO below.
 """
 
 from __future__ import annotations
@@ -64,52 +65,51 @@ GOLDSKY_BASE = (
     "https://api.goldsky.com/api/public/project_cmgzim3e100095np2gjnbh6ry/subgraphs"
 )
 
-# Subgraphs de Index DTF por chain — públicos, sem API key.
+# Index DTF subgraphs per chain — public, no API key.
 INDEX_SUBGRAPH_URLS = {
     "mainnet": f"{GOLDSKY_BASE}/dtf-index-mainnet/prod/gn",
     "base": f"{GOLDSKY_BASE}/dtf-index-base/prod/gn",
     "bsc": f"{GOLDSKY_BASE}/dtf-index-bsc/prod/gn",
 }
 
-# DefiLlama usa esses mesmos nomes de chain como prefixo em coins.llama.fi.
+# DefiLlama uses these same chain names as a prefix in coins.llama.fi.
 DEFILLAMA_CHAIN_PREFIX = {"mainnet": "ethereum", "base": "base", "bsc": "bsc"}
 
 DEFILLAMA_PROTOCOL_SLUG = "reserve-protocol"
 DEFAULT_TIMEOUT = 15
 
-# basket_id = "<chain>:<endereço do DTF>". Duas Index DTFs reais (compostas
-# pelo mesmo subgraph) + uma Yield DTF real (eUSD) só pra deixar visível na
-# UI a limitação de dado descrita acima — ver get_current_allocation.
+# basket_id = "<chain>:<DTF address>". Two real Index DTFs (composed via the
+# same subgraph) + one real Yield DTF (eUSD) just to make the data
+# limitation described above visible in the UI — see get_current_allocation.
 EXAMPLE_BASKETS = {
     "OPEN — Index DTF (mainnet)": "mainnet:0x323c03c48660fe31186fa82c289b0766d331ce21",
     "LCAP — Index DTF (base)": "base:0x4dA9A0f397dB1397902070f93a4D6ddBC0E0E6e8",
-    "eUSD — Yield DTF (mainnet, composição indisponível)": (
+    "eUSD — Yield DTF (mainnet, composition unavailable)": (
         "mainnet:0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F"
     ),
 }
 
-# Quem decide um rebalanceamento no Reserve — pro card comparativo no app.py.
+# Who decides a rebalance on Reserve — for the comparative card in app.py.
 DECISION_MAKER = (
-    "Governança on-chain (votação com stToken) aprova os limites de cada "
-    "rebalance; a execução é via leilão holandês (Dutch auction), não por "
-    "uma API key de provider como na Glider."
+    "On-chain governance (stToken voting) approves each rebalance's limits; "
+    "execution is via Dutch auction, not a provider API key like Glider's."
 )
 
 
 class ReserveAPIError(Exception):
-    """Erro legível pra mostrar na UI (rede, GraphQL, ou limitação de dado conhecida)."""
+    """Readable error to show in the UI (network, GraphQL, or a known data limitation)."""
 
 
 def _parse_basket_id(basket_id: str) -> tuple[str, str]:
     if ":" not in basket_id:
         raise ReserveAPIError(
-            f"basket_id inválido: '{basket_id}' — formato esperado é '<chain>:<endereço>' "
-            "(ex: 'mainnet:0x...')."
+            f"Invalid basket_id: '{basket_id}' — expected format is '<chain>:<address>' "
+            "(e.g. 'mainnet:0x...')."
         )
     chain_key, address = basket_id.split(":", 1)
     if chain_key not in INDEX_SUBGRAPH_URLS:
         raise ReserveAPIError(
-            f"Chain '{chain_key}' não suportada. Use uma de: "
+            f"Chain '{chain_key}' not supported. Use one of: "
             f"{', '.join(INDEX_SUBGRAPH_URLS)}."
         )
     return chain_key, address.lower()
@@ -130,18 +130,18 @@ def _graphql(url: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
             url, json={"query": query, "variables": variables}, timeout=DEFAULT_TIMEOUT
         )
     except requests.RequestException as exc:
-        raise ReserveAPIError(f"Falha de rede ao consultar subgraph: {exc}") from exc
+        raise ReserveAPIError(f"Network failure querying subgraph: {exc}") from exc
 
     try:
         body = response.json()
     except ValueError as exc:
         raise ReserveAPIError(
-            f"Resposta inválida (não é JSON) do subgraph — status {response.status_code}"
+            f"Invalid response (not JSON) from subgraph — status {response.status_code}"
         ) from exc
 
     if not response.ok or "errors" in body:
         message = body.get("errors") if isinstance(body, dict) else None
-        raise ReserveAPIError(f"Erro no subgraph do Reserve: {message or response.status_code}")
+        raise ReserveAPIError(f"Error in Reserve subgraph: {message or response.status_code}")
 
     return body.get("data") or {}
 
@@ -166,11 +166,12 @@ def _fetch_rebalances(chain_key: str, address: str) -> list[dict[str, Any]]:
 
 
 def _weights_from_rebalance(rebalance: dict[str, Any], chain_key: str) -> list[dict[str, Any]]:
-    """Normaliza weightSpotLimit (quantidade-alvo bruta) em % relativo por token.
+    """Normalizes weightSpotLimit (raw target quantity) into a relative % per token.
 
-    Aproximação por QUANTIDADE, não por valor em USD — ver docstring do módulo.
-    Inclui `price_ref` (chain:endereço no formato DefiLlama) pra viabilizar a
-    simulação de "e se eu pesasse diferente" no app.py — ver adapters/pricing.py.
+    Approximation by QUANTITY, not by USD value — see module docstring.
+    Includes `price_ref` (chain:address in DefiLlama format) to enable the
+    "what if I weighted it differently" simulation in app.py — see
+    adapters/pricing.py.
     """
     tokens = rebalance.get("tokens") or []
     raw_weights = [_to_float(w) or 0.0 for w in (rebalance.get("weightSpotLimit") or [])]
@@ -197,40 +198,42 @@ def _weights_from_rebalance(rebalance: dict[str, Any], chain_key: str) -> list[d
 
 
 def get_current_allocation(basket_id: str) -> list[dict[str, Any]]:
-    """Alocação-alvo atual, aproximada pelo rebalance mais recente.
+    """Current target allocation, approximated from the most recent rebalance.
 
-    Não existe, no subgraph público, um endpoint dedicado de "basket atual"
-    — usamos os pesos-alvo (weightSpotLimit) do último `Rebalance` como
-    proxy, já que é o estado que a última auction convergiu pra ele. Pra um
-    valor exato seria necessário ler o contrato on-chain (`Folio.basket()`).
+    The public subgraph doesn't have a dedicated "current basket" endpoint
+    — we use the target weights (weightSpotLimit) from the last `Rebalance`
+    as a proxy, since that's the state the last auction converged to. For
+    an exact value it would be necessary to read the on-chain contract
+    (`Folio.basket()`).
     """
     chain_key, address = _parse_basket_id(basket_id)
     rebalances = _fetch_rebalances(chain_key, address)
     if not rebalances:
         raise ReserveAPIError(
-            "Nenhum rebalance encontrado pra esse DTF nesse subgraph — se for "
-            "uma Yield DTF, a composição não é exposta por essa via pública "
-            "(ver docstring do módulo)."
+            "No rebalance found for this DTF in this subgraph — if it's a "
+            "Yield DTF, composition is not exposed through this public "
+            "route (see module docstring)."
         )
     return _weights_from_rebalance(rebalances[-1], chain_key)
 
 
 def get_rebalance_history(basket_id: str) -> list[dict[str, Any]]:
-    """Histórico real de rebalanceamentos (um Dutch auction por rebalance).
+    """Real rebalance history (one Dutch auction per rebalance).
 
-    TODO: sem endpoint de eventos que já ligue rebalance -> proposta de
-    governança que o aprovou (não há FK entre `Rebalance` e `Proposal` no
-    schema público). Pra cruzar manualmente seria preciso comparar
-    `Rebalance.timestamp` com `DTF.ownerGovernance.proposals[].executionTime`
-    (query `getGovernanceStats`, não implementada aqui).
+    TODO: there's no events endpoint that already links a rebalance to the
+    governance proposal that approved it (no FK between `Rebalance` and
+    `Proposal` in the public schema). To cross-reference manually you'd
+    need to compare `Rebalance.timestamp` with
+    `DTF.ownerGovernance.proposals[].executionTime` (query
+    `getGovernanceStats`, not implemented here).
     """
     chain_key, address = _parse_basket_id(basket_id)
     rebalances = _fetch_rebalances(chain_key, address)
     if not rebalances:
         raise ReserveAPIError(
-            "Nenhum rebalance encontrado pra esse DTF nesse subgraph — se for "
-            "uma Yield DTF, o histórico de rebalanceamento não é exposto por "
-            "essa via pública (ver docstring do módulo)."
+            "No rebalance found for this DTF in this subgraph — if it's a "
+            "Yield DTF, rebalance history is not exposed through this "
+            "public route (see module docstring)."
         )
 
     history = []
@@ -241,8 +244,8 @@ def get_rebalance_history(basket_id: str) -> list[dict[str, Any]]:
             {
                 "date": _timestamp_to_iso(rebalance.get("timestamp")),
                 "description": (
-                    f"Rebalance nonce {rebalance.get('nonce')} — leilão holandês, "
-                    f"{num_assets} ativos"
+                    f"Rebalance nonce {rebalance.get('nonce')} — Dutch auction, "
+                    f"{num_assets} assets"
                     + (f" (tx {tx[:10]}…)" if tx else "")
                 ),
                 "weights_after": _weights_from_rebalance(rebalance, chain_key),
@@ -261,13 +264,13 @@ def _timestamp_to_iso(timestamp: Any) -> str | None:
 
 
 def get_performance(basket_id: str) -> dict[str, Any]:
-    """Curva de performance aproximada via preço histórico do token (DefiLlama).
+    """Approximate performance curve via the token's historical price (DefiLlama).
 
-    O Reserve não expõe um endpoint de performance como o da Glider (TWR/MWR
-    prontos). Aproximamos usando o preço de mercado do token do DTF ao longo
-    do tempo (`coins.llama.fi/chart`) — como o token representa uma cota do
-    basket, sua variação de preço se aproxima de um retorno TWR (não é um
-    cálculo formal, e não tenta capturar fluxos de mint/redeem por conta).
+    Reserve doesn't expose a ready-made performance endpoint like Glider's
+    (TWR/MWR). We approximate using the DTF token's market price over time
+    (`coins.llama.fi/chart`) — since the token represents a share of the
+    basket, its price movement approximates a TWR return (not a formal
+    calculation, and it doesn't try to capture per-account mint/redeem flows).
     """
     chain_key, address = _parse_basket_id(basket_id)
     prefix = DEFILLAMA_CHAIN_PREFIX[chain_key]
@@ -278,14 +281,14 @@ def get_performance(basket_id: str) -> dict[str, Any]:
         response.raise_for_status()
         body = response.json()
     except (requests.RequestException, ValueError) as exc:
-        raise ReserveAPIError(f"Falha ao buscar preço histórico no DefiLlama: {exc}") from exc
+        raise ReserveAPIError(f"Failed to fetch historical price from DefiLlama: {exc}") from exc
 
     coin_key = f"{prefix}:{address}"
     prices = ((body.get("coins") or {}).get(coin_key) or {}).get("prices") or []
     if not prices:
         raise ReserveAPIError(
-            "DefiLlama não tem preço histórico pra esse token — sem dado de "
-            "performance disponível pra esse DTF."
+            "DefiLlama has no historical price for this token — no "
+            "performance data available for this DTF."
         )
 
     base_price = prices[0]["price"]
@@ -297,12 +300,13 @@ def get_performance(basket_id: str) -> dict[str, Any]:
         for p in prices
     ]
 
-    return {"method": "Preço do token (proxy de NAV, via DefiLlama)", "points": points}
+    return {"method": "Token price (NAV proxy, via DefiLlama)", "points": points}
 
 
 def get_tvl_usd_defillama() -> float | None:
-    """TVL agregado do protocolo Reserve inteiro, via DefiLlama — cruzamento,
-    não TVL por DTF individual (DefiLlama não quebra por DTF)."""
+    """Aggregated TVL for the entire Reserve protocol, via DefiLlama — a
+    cross-check, not TVL for an individual DTF (DefiLlama doesn't break it
+    down by DTF)."""
     try:
         response = requests.get(
             f"https://api.llama.fi/tvl/{DEFILLAMA_PROTOCOL_SLUG}", timeout=DEFAULT_TIMEOUT
