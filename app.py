@@ -278,8 +278,14 @@ with tab_allocation:
         )
         chart_col, table_col = st.columns([2, 1])
         with chart_col:
-            fig = px.pie(df_allocation, names="asset", values="weight_pct", title="Simulated weight per asset (%)")
-            st.plotly_chart(fig, use_container_width=True)
+            fig = px.pie(
+                df_allocation,
+                names="asset",
+                values="weight_pct",
+                title="Simulated weight per asset (%)",
+                hole=0.55,
+            )
+            st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
         with table_col:
             st.dataframe(
                 df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
@@ -357,7 +363,7 @@ with tab_performance:
             title="Accumulated return (%) — real vs. simulated",
             labels={"date": "Date", "percent_change": "Accumulated return (%)"},
         )
-        st.plotly_chart(fig_perf, use_container_width=True)
+        st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
         st.caption(
             "'Real' uses the platform's native method/source (see adapter). "
             "'Simulated' recombines each asset's historical price using the "
