@@ -1,27 +1,28 @@
 """
-Adapter para a Glider B2B API v2 (https://api.glider.fi/v2).
+Adapter for the Glider B2B API v2 (https://api.glider.fi/v2).
 
-Interface "unificada" que este adapter expõe (pra bater com reserve.py e
-quantamm.py no futuro, e permitir comparar as três plataformas lado a lado):
+"Unified" interface this adapter exposes (to match reserve.py and
+quantamm.py in the future, and allow comparing the three platforms side by
+side):
 
 - get_target_allocation(strategy_id) -> list[{"asset": str, "weight": float}]
-    weight em escala 0-100.
-- get_version_history(strategy_id) -> list[dict] (ordem cronológica, mais antigo primeiro)
-    cada item: {"version", "date", "change_log", "num_assets", "weight_changed", "assets"}
+    weight on a 0-100 scale.
+- get_version_history(strategy_id) -> list[dict] (chronological order, oldest first)
+    each item: {"version", "date", "change_log", "num_assets", "weight_changed", "assets"}
 - get_performance(strategy_id) -> {"method": "TWR"|"MWR", "points": [{"date", "percent_change"}]}
 - discover_strategies(collection) -> list[dict]
-    cada item: {"strategy_id", "name", "tvl_usd", "portfolio_count", "assets"}
+    each item: {"strategy_id", "name", "tvl_usd", "portfolio_count", "assets"}
 
-Todas as funções levantam GliderAPIError com uma mensagem legível em caso de
-falha (rede, HTTP, ou envelope {"success": false, ...}). Nenhuma função aqui
-usa Streamlit — cache fica por conta de quem chama (ver app.py).
+All functions raise GliderAPIError with a readable message on failure
+(network, HTTP, or {"success": false, ...} envelope). No function here uses
+Streamlit — caching is the caller's responsibility (see app.py).
 
-Além disso, pra viabilizar a visão comparativa lado a lado (app.py alterna o
-adapter conforme a plataforma escolhida), este módulo também expõe a
-interface comum aos três adapters — get_current_allocation,
-get_rebalance_history — como wrappers finos em cima das funções acima (ver
-final do arquivo). adapters/reserve.py e adapters/quantamm.py implementam a
-mesma interface diretamente.
+Also, to enable the side-by-side comparative view (app.py switches the
+adapter based on the chosen platform), this module also exposes the
+interface common to the three adapters — get_current_allocation,
+get_rebalance_history — as thin wrappers on top of the functions above (see
+end of file). adapters/reserve.py and adapters/quantamm.py implement the
+same interface directly.
 """
 
 from __future__ import annotations
@@ -35,38 +36,38 @@ import requests
 from . import pricing
 
 BASE_URL = "https://api.glider.fi/v2"
-DEFAULT_TIMEOUT = 15  # segundos
+DEFAULT_TIMEOUT = 15  # seconds
 
-# strategy_id de exemplo pro dropdown (mesmas duas do prompt original).
+# example strategy_id for the dropdown (same two as the original prompt).
 EXAMPLE_BASKETS = {
     "Mag7 (Ondo/Bitwise, equal weight)": "01KV68M2Y685X59DWAEVX5D5X3",
     "Nancy Pelosi Tracker": "01KWJ0Q9GXP1HBN2Z53RCHCHQW",
 }
 
-# Quem decide um rebalanceamento na Glider — pro card comparativo no app.py.
+# Who decides a rebalance on Glider — for the comparative card in app.py.
 DECISION_MAKER = (
-    "Unilateral pelo provider da estratégia via chave de API — sem "
-    "governança on-chain nem sinal de ML público envolvido."
+    "Unilateral by the strategy provider via API key — no on-chain "
+    "governance nor public ML signal involved."
 )
 
 
 class GliderAPIError(Exception):
-    """Erro legível pra mostrar na UI (rede, HTTP, ou success=false)."""
+    """Readable error to show in the UI (network, HTTP, or success=false)."""
 
 
 def _get_api_key() -> str:
     api_key = os.environ.get("GLIDER_API_KEY", "").strip()
     if not api_key:
         raise GliderAPIError(
-            "GLIDER_API_KEY não configurada. Crie um arquivo .env (veja "
-            ".env.example) com sua key da Glider — peça uma em "
+            "GLIDER_API_KEY not configured. Create a .env file (see "
+            ".env.example) with your Glider key — request one at "
             "https://console.glidercloud.dev/."
         )
     return api_key
 
 
 def _to_float(value: Any) -> float | None:
-    """Converte um decimal-string da API (ex: '60.00') pra float com cuidado."""
+    """Carefully converts a decimal-string from the API (e.g. '60.00') to float."""
     if value is None:
         return None
     try:
@@ -76,10 +77,10 @@ def _to_float(value: Any) -> float | None:
 
 
 def _request(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """GET autenticado em BASE_URL + path. Retorna o corpo já parseado.
+    """Authenticated GET on BASE_URL + path. Returns the already-parsed body.
 
-    Levanta GliderAPIError em qualquer falha de rede, HTTP, JSON inválido,
-    ou envelope {"success": false, "error": {...}}.
+    Raises GliderAPIError on any network failure, HTTP failure, invalid
+    JSON, or {"success": false, "error": {...}} envelope.
     """
     api_key = _get_api_key()
     url = f"{BASE_URL}{path}"
@@ -92,25 +93,25 @@ def _request(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
-        raise GliderAPIError(f"Falha de rede ao chamar {path}: {exc}") from exc
+        raise GliderAPIError(f"Network failure calling {path}: {exc}") from exc
 
     try:
         body = response.json()
     except ValueError as exc:
         raise GliderAPIError(
-            f"Resposta inválida (não é JSON) de {path} — status {response.status_code}"
+            f"Invalid response (not JSON) from {path} — status {response.status_code}"
         ) from exc
 
     if not response.ok:
         error = body.get("error") if isinstance(body, dict) else None
         message = (error or {}).get("message") if error else None
         raise GliderAPIError(
-            message or f"Erro HTTP {response.status_code} ao chamar {path}"
+            message or f"HTTP error {response.status_code} calling {path}"
         )
 
     if not body.get("success"):
         error = body.get("error") or {}
-        raise GliderAPIError(error.get("message", f"Erro desconhecido em {path}"))
+        raise GliderAPIError(error.get("message", f"Unknown error in {path}"))
 
     return body
 
@@ -133,7 +134,7 @@ def discover_strategies(
     sort: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """GET /v2/discovery/strategies — pra popular um dropdown de exploração."""
+    """GET /v2/discovery/strategies — to populate an exploration dropdown."""
     params: dict[str, Any] = {"collection": collection, "limit": limit}
     if sort:
         params["sort"] = sort
@@ -168,7 +169,7 @@ def discover_strategies(
 
 
 def get_strategy_detail(strategy_id: str) -> dict[str, Any]:
-    """GET /v2/strategies/{strategyId} — nome, descrição, alocação-alvo, schedule."""
+    """GET /v2/strategies/{strategyId} — name, description, target allocation, schedule."""
     body = _request(f"/strategies/{strategy_id}")
     data = body.get("data") or {}
     return {
@@ -181,16 +182,16 @@ def get_strategy_detail(strategy_id: str) -> dict[str, Any]:
 
 
 def get_target_allocation(strategy_id: str) -> list[dict[str, Any]]:
-    """Alocação-alvo atual: list[{"asset", "weight"}], weight em 0-100."""
+    """Current target allocation: list[{"asset", "weight"}], weight in 0-100."""
     return get_strategy_detail(strategy_id)["assets"]
 
 
 def get_version_history(strategy_id: str) -> list[dict[str, Any]]:
-    """GET /v2/strategies/{strategyId}/versions, paginando via nextCursor.
+    """GET /v2/strategies/{strategyId}/versions, paginating via nextCursor.
 
-    Retorna em ordem cronológica (mais antigo primeiro) e já calcula, pra
-    cada versão, se o peso de algum ativo mudou em relação à versão anterior
-    — esse é o "log de rebalanceamento" que o app mostra numa tabela.
+    Returns in chronological order (oldest first) and already computes, for
+    each version, whether any asset's weight changed relative to the
+    previous version — this is the "rebalance log" the app shows in a table.
     """
     raw_versions: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -206,7 +207,7 @@ def get_version_history(strategy_id: str) -> list[dict[str, Any]]:
         if not cursor:
             break
 
-    # ordena por número de versão crescente (mais antigo primeiro)
+    # sort by ascending version number (oldest first)
     raw_versions.sort(key=lambda v: v.get("version", 0))
 
     history: list[dict[str, Any]] = []
@@ -217,7 +218,7 @@ def get_version_history(strategy_id: str) -> list[dict[str, Any]]:
         weights = {a["asset"]: a["weight"] for a in assets if a["asset"] is not None}
 
         if previous_weights is None:
-            weight_changed = False  # primeira versão conhecida: não há "antes"
+            weight_changed = False  # first known version: there's no "before"
         else:
             weight_changed = weights != previous_weights
 
@@ -238,10 +239,10 @@ def get_version_history(strategy_id: str) -> list[dict[str, Any]]:
 
 
 def get_performance(strategy_id: str) -> dict[str, Any]:
-    """GET /v2/strategies/{strategyId}/performance — curva de retorno acumulado.
+    """GET /v2/strategies/{strategyId}/performance — accumulated return curve.
 
-    method é "TWR" (time-weighted) ou "MWR" (money-weighted) — cálculos
-    diferentes, por isso mostramos qual foi usado na legenda do gráfico.
+    method is "TWR" (time-weighted) or "MWR" (money-weighted) — different
+    calculations, which is why we show which one was used in the chart legend.
     """
     body = _request(f"/strategies/{strategy_id}/performance")
     data = body.get("data") or {}
@@ -262,16 +263,17 @@ def get_performance(strategy_id: str) -> dict[str, Any]:
     }
 
 
-# --- interface comum aos três adapters (ver docstring do módulo) -----------
+# --- interface common to the three adapters (see module docstring) --------
 
 
 def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
-    """Wrapper fino sobre get_target_allocation, no formato comum aos adapters.
+    """Thin wrapper over get_target_allocation, in the format common to the adapters.
 
-    Inclui `price_ref` (pra simulação de "e se eu pesasse diferente" no
-    app.py) quando o assetId CAIP-19 é um erc20 numa chain EVM conhecida —
-    ver adapters/pricing.py. Ativos fora desse caso (ex: não-EVM) ficam com
-    price_ref None e o app.py simplesmente os exclui da simulação.
+    Includes `price_ref` (for the "what if I weighted it differently"
+    simulation in app.py) when the CAIP-19 assetId is an erc20 on a known
+    EVM chain — see adapters/pricing.py. Assets outside that case (e.g.
+    non-EVM) are left with price_ref None and app.py simply excludes them
+    from the simulation.
     """
     return [
         {
@@ -284,14 +286,14 @@ def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
 
 
 def get_rebalance_history(strategy_id: str) -> list[dict[str, Any]]:
-    """Wrapper fino sobre get_version_history, no formato comum aos adapters."""
+    """Thin wrapper over get_version_history, in the format common to the adapters."""
     history = []
     for version in get_version_history(strategy_id):
         if version["change_log"]:
             description = version["change_log"]
         else:
-            description = f"Versão {version['version']}" + (
-                " — peso alterado" if version["weight_changed"] else " — sem mudança de peso"
+            description = f"Version {version['version']}" + (
+                " — weight changed" if version["weight_changed"] else " — no weight change"
             )
         history.append(
             {
