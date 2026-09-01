@@ -1,10 +1,7 @@
 [theme]
 base = "dark"
-primaryColor = "#00d18f"
-backgroundColor = "#0b0e11"
-secondaryBackgroundColor = "#12161b"
-textColor = "#d7dde3"
-font = "monospace"
-
-[ui]
-hideTopBar = false
+primaryColor = "#6ea8fe"
+backgroundColor = "#111318"
+secondaryBackgroundColor = "#1a1d24"
+textColor = "#e4e6eb"
+font = "sans serif"

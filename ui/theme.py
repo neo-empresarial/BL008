@@ -1,6 +1,6 @@
 """
-Shared visual language for the dark research-console UI: color constants,
-app-level CSS injection, and a Plotly layout applied to every chart.
+Shared visual language for the minimal dark UI: color constants, app-level
+CSS injection, and a Plotly layout applied to every chart.
 
 Nothing here touches data or adapter logic — this module only styles what
 app.py already computes. See `.streamlit/config.toml` for the base
@@ -13,35 +13,44 @@ from typing import Any
 
 import streamlit as st
 
-BACKGROUND = "#0b0e11"
-SURFACE = "#12161b"
-BORDER = "#232830"
-TEXT = "#d7dde3"
-TEXT_MUTED = "#8b95a1"
-ACCENT = "#00d18f"
-GRID = "#1c2129"
+BACKGROUND = "#111318"
+SURFACE = "#1a1d24"
+BORDER = "#2a2e37"
+TEXT = "#e4e6eb"
+TEXT_MUTED = "#9299a6"
+ACCENT = "#6ea8fe"
+GRID = "#242832"
 
-# Applied to every series added to a chart, in order — kept restrained
-# (accent green first, then a handful of muted, distinguishable hues) so a
-# 2-3 series chart reads as one system rather than a rainbow.
-COLORWAY = [ACCENT, "#4fa3ff", "#f2b134", "#ff6b6b", "#9d7bff", "#31c7c7"]
+# Applied to every series added to a chart, in order — restrained and
+# readable rather than a default rainbow, so a 2-3 series chart reads as
+# one system.
+COLORWAY = [ACCENT, "#f2b134", "#7ee08c", "#ff8fa3", "#c792ea", "#5fd4d4"]
 
-FONT_FAMILY = "JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+FONT_FAMILY = (
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+)
+MONO_FONT_FAMILY = "SFMono-Regular, Menlo, Consolas, monospace"
+
+DEFAULT_CHART_HEIGHT = 420
 
 PLOTLY_LAYOUT: dict[str, Any] = {
     "paper_bgcolor": SURFACE,
     "plot_bgcolor": SURFACE,
-    "font": {"family": FONT_FAMILY, "color": TEXT, "size": 12},
+    "font": {"family": FONT_FAMILY, "color": TEXT, "size": 13},
     "colorway": COLORWAY,
     "legend": {"bgcolor": "rgba(0,0,0,0)"},
     "margin": {"l": 40, "r": 20, "t": 40, "b": 30},
     "title": {"font": {"size": 14, "color": TEXT_MUTED}},
+    "height": DEFAULT_CHART_HEIGHT,
 }
 
 
 def apply_chart_theme(fig):
-    """Applies the shared dark layout/colorway to a Plotly figure in place
-    and returns it, so calls can stay inline: `st.plotly_chart(apply_chart_theme(fig))`."""
+    """Applies the shared dark layout/colorway/height to a Plotly figure in
+    place and returns it, so calls can stay inline:
+    `st.plotly_chart(apply_chart_theme(fig))`. Pass `height=` in a
+    subsequent `fig.update_layout` call to override `DEFAULT_CHART_HEIGHT`
+    for a specific chart."""
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_xaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=BORDER)
     fig.update_yaxes(gridcolor=GRID, zerolinecolor=GRID, linecolor=BORDER)
@@ -49,19 +58,32 @@ def apply_chart_theme(fig):
 
 
 def inject_css() -> None:
-    """Injects app-level CSS: tighter spacing and a console-style header/badge
-    look on top of the base theme from `.streamlit/config.toml`. Call once,
-    right after `st.set_page_config`."""
+    """Injects app-level CSS: readable sans-serif typography, extra top
+    padding so the header isn't clipped under Streamlit's toolbar, rounded
+    card-like chart/table surfaces (with `overflow: hidden` so the rounded
+    corners actually clip the chart's own background), and address/link
+    styling — on top of the base theme from `.streamlit/config.toml`. Call
+    once, right after `st.set_page_config`."""
     st.markdown(
         f"""
         <style>
+        html, body, [class*="css"] {{
+            font-family: {FONT_FAMILY};
+        }}
         .block-container {{
-            padding-top: 1.5rem;
+            padding-top: 3rem;
             padding-bottom: 2rem;
             max-width: 1200px;
         }}
         [data-testid="stSidebar"] {{
             border-right: 1px solid {BORDER};
+        }}
+        [data-testid="stPlotlyChart"], [data-testid="stDataFrame"] {{
+            border: 1px solid {BORDER};
+            border-radius: 12px;
+            padding: 0.5rem;
+            background-color: {SURFACE};
+            overflow: hidden;
         }}
         .console-header {{
             display: flex;
@@ -74,9 +96,8 @@ def inject_css() -> None:
             border-bottom: 1px solid {BORDER};
         }}
         .console-title {{
-            font-size: 1.1rem;
+            font-size: 1.25rem;
             font-weight: 700;
-            letter-spacing: 0.08em;
             color: {TEXT};
         }}
         .console-meta {{
@@ -88,19 +109,27 @@ def inject_css() -> None:
         }}
         .badge {{
             display: inline-block;
-            padding: 0.15rem 0.55rem;
+            padding: 0.15rem 0.6rem;
             border-radius: 999px;
-            border: 1px solid {ACCENT};
-            color: {ACCENT};
+            background-color: {ACCENT};
+            color: {BACKGROUND};
             font-size: 0.75rem;
-            letter-spacing: 0.03em;
+            font-weight: 600;
         }}
         .basket-id {{
-            font-family: {FONT_FAMILY};
+            font-family: {MONO_FONT_FAMILY};
             color: {TEXT_MUTED};
         }}
+        .asset-address {{
+            font-family: {MONO_FONT_FAMILY};
+            color: {TEXT_MUTED};
+        }}
+        .asset-address a {{
+            color: {ACCENT};
+            text-decoration: none;
+        }}
         [data-testid="stMetricValue"] {{
-            font-family: {FONT_FAMILY};
+            font-family: {MONO_FONT_FAMILY};
         }}
         </style>
         """,
@@ -109,7 +138,7 @@ def inject_css() -> None:
 
 
 def render_header(title: str, platform_name: str, basket_id: str) -> None:
-    """Compact console-style header: product name, platform badge, basket id."""
+    """Compact header: product name, platform badge, basket id."""
     st.markdown(
         f"""
         <div class="console-header">
