@@ -266,6 +266,29 @@ def get_performance(strategy_id: str) -> dict[str, Any]:
 # --- interface common to the three adapters (see module docstring) --------
 
 
+def _short_address(address: str) -> str:
+    """Truncates a hex address to '0x1234…abcd' — used as a display fallback
+    when no symbol is available, so the UI never shows a raw CAIP-19 string."""
+    if len(address) <= 10:
+        return address
+    return f"{address[:6]}…{address[-4:]}"
+
+
+def _display_asset(asset_id: str | None) -> str:
+    """Best-effort human-readable label for a CAIP-19 assetId.
+
+    The Glider API doesn't return a token symbol alongside assetId, so we
+    fall back to a truncated address rather than showing the full
+    'eip155:1/erc20:0x...' string as the primary label.
+    """
+    if not asset_id:
+        return "—"
+    if "/" in asset_id:
+        _, _, reference = asset_id.rpartition(":")
+        return _short_address(reference)
+    return asset_id
+
+
 def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
     """Thin wrapper over get_target_allocation, in the format common to the adapters.
 
@@ -274,15 +297,29 @@ def get_current_allocation(strategy_id: str) -> list[dict[str, Any]]:
     EVM chain — see adapters/pricing.py. Assets outside that case (e.g.
     non-EVM) are left with price_ref None and app.py simply excludes them
     from the simulation.
+
+    Also includes optional display metadata (`display_asset`, `token_address`,
+    `chain`, `explorer_url`) derived from the same CAIP-19 assetId, so the UI
+    can show something more readable than the raw identifier. `asset` itself
+    is unchanged (still the raw assetId) for backward compatibility with
+    code that keys off it.
     """
-    return [
-        {
-            "asset": a["asset"],
-            "weight_pct": a["weight"],
-            "price_ref": pricing.caip19_to_price_ref(a["asset"]),
-        }
-        for a in get_target_allocation(strategy_id)
-    ]
+    rows = []
+    for a in get_target_allocation(strategy_id):
+        price_ref = pricing.caip19_to_price_ref(a["asset"])
+        chain, _, token_address = price_ref.partition(":") if price_ref else (None, None, None)
+        rows.append(
+            {
+                "asset": a["asset"],
+                "weight_pct": a["weight"],
+                "price_ref": price_ref,
+                "display_asset": _display_asset(a["asset"]),
+                "token_address": token_address or None,
+                "chain": chain,
+                "explorer_url": pricing.price_ref_to_explorer_url(price_ref),
+            }
+        )
+    return rows
 
 
 def get_rebalance_history(strategy_id: str) -> list[dict[str, Any]]:
