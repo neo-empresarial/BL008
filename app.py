@@ -295,32 +295,46 @@ if not basket_id:
 
 theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
 
-# tvlUsd only comes from Glider's discovery; Reserve and QuantAMM only have
-# aggregated TVL per protocol via DefiLlama (not per individual basket) —
-# see docstring of get_tvl_usd_defillama in each adapter.
+# Per-basket TVL, when available, comes from the same discover_baskets()
+# rows the sidebar already fetched (cached) — QuantAMM has real per-pool
+# TVL there; Reserve's subgraph has no TVL field, so tvl_usd is always None
+# for it (see each adapter's discover_baskets docstring). Glider additionally
+# shows wallet count, which isn't part of the shared discovery shape and
+# needs its own (also cached) discover_strategies call.
+basket_rows, basket_rows_error = safe_call(cached_discover_baskets, platform_name)
+basket_match = None
+if basket_rows:
+    basket_match = next(
+        (r for r in basket_rows if r["basket_id"].lower() == basket_id.lower()), None
+    )
+per_basket_tvl = basket_match["tvl_usd"] if basket_match else None
+
 if platform_name == "Glider":
-    discovery, discovery_error = safe_call(cached_discover_glider_strategies, "curated")
-    metrics_match = None
-    if discovery:
-        metrics_match = next((s for s in discovery if s["strategy_id"] == basket_id), None)
-    if metrics_match:
-        col1, col2 = st.columns(2)
-        col1.metric(
-            "TVL (USD)",
-            f"${metrics_match['tvl_usd']:,.2f}" if metrics_match["tvl_usd"] is not None else "—",
-        )
-        col2.metric(
-            "Nº of wallets",
-            metrics_match["portfolio_count"] if metrics_match["portfolio_count"] is not None else "—",
-        )
-    elif discovery_error:
-        st.caption(f"TVL/wallet count unavailable: {discovery_error}")
-else:
-    tvl, _ = safe_call(adapter.get_tvl_usd_defillama)
-    if tvl is not None:
+    strategies, strategies_error = safe_call(cached_discover_glider_strategies, "curated")
+    portfolio_count = None
+    if strategies:
+        strategy_match = next((s for s in strategies if s["strategy_id"] == basket_id), None)
+        portfolio_count = strategy_match["portfolio_count"] if strategy_match else None
+
+    col1, col2 = st.columns(2)
+    col1.metric("TVL (USD)", f"${per_basket_tvl:,.2f}" if per_basket_tvl is not None else "—")
+    col2.metric("Nº of wallets", portfolio_count if portfolio_count is not None else "—")
+    if per_basket_tvl is None and portfolio_count is None:
         st.caption(
-            f"TVL for the entire protocol (DefiLlama, cross-check — not per-basket TVL): ${tvl:,.0f}"
+            "TVL/wallet count unavailable: "
+            + (basket_rows_error or strategies_error or "this strategy isn't in the curated discovery collection.")
         )
+else:
+    if per_basket_tvl is not None:
+        st.metric("TVL (USD)", f"${per_basket_tvl:,.2f}")
+    else:
+        tvl, tvl_error = safe_call(adapter.get_tvl_usd_defillama)
+        if tvl is not None:
+            st.caption(
+                f"Per-basket TVL unavailable — protocol-wide TVL (DefiLlama, cross-check): ${tvl:,.0f}"
+            )
+        else:
+            st.caption("TVL unavailable" + (f": {tvl_error}" if tvl_error else "."))
 
 # --- allocation editor ------------------------------------------------------
 
