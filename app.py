@@ -158,6 +158,19 @@ def simulate_weighted_performance(
     return points, excluded
 
 
+def to_display_series(df: pd.DataFrame, chart_mode: str) -> pd.DataFrame:
+    """Converts a {"percent_change", ...} frame into the active chart mode:
+    "Indexed value" (base 100 at each series' first point, `percent_change`
+    already is relative to that same first point) or "Percent return"
+    (`percent_change` as-is)."""
+    df = df.copy()
+    if chart_mode == "Indexed value":
+        df["display_value"] = 100.0 + df["percent_change"]
+    else:
+        df["display_value"] = df["percent_change"]
+    return df
+
+
 # --- UI ----------------------------------------------------------------
 
 
@@ -218,6 +231,13 @@ allocation, allocation_error = safe_call(cached_get_current_allocation, platform
 
 edited_weights: dict[str, float] = {}
 price_refs: dict[str, str | None] = {}
+
+chart_mode = st.radio(
+    "Chart mode",
+    ["Indexed value", "Percent return"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
 
 workspace_left, workspace_right = st.columns([2, 3])
 
@@ -365,14 +385,15 @@ with workspace_right:
             )
 
     if perf_frames:
-        df_perf_all = pd.concat(perf_frames, ignore_index=True)
+        df_perf_all = to_display_series(pd.concat(perf_frames, ignore_index=True), chart_mode)
+        y_label = "Indexed value (base 100)" if chart_mode == "Indexed value" else "Accumulated return (%)"
         fig_perf = px.line(
             df_perf_all,
             x="date",
-            y="percent_change",
+            y="display_value",
             color="series",
-            title="Accumulated return (%) — real vs. simulated",
-            labels={"date": "Date", "percent_change": "Accumulated return (%)"},
+            title=f"Performance — real vs. simulated ({chart_mode.lower()})",
+            labels={"date": "Date", "display_value": y_label},
         )
         st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
         st.caption(
