@@ -4,25 +4,31 @@ On-chain basket rebalancing simulator — MVP.
 Compares real rebalancing behavior across "index basket" platforms: Glider,
 Reserve Protocol and QuantAMM/Balancer. A platform selector swaps which
 adapter is used (same interface across all three — see each one's docstring
-in adapters/), showing the same three blocks (current allocation, rebalance
-history, performance) with the same layout, to allow a visual side-by-side
-even with data from very different sources.
+in adapters/). The main workspace pairs the allocation editor with a live
+performance chart for the selected basket; rebalance history and protocol
+details sit below as secondary, collapsed sections; a separate comparison
+section overlays the real performance of multiple example strategies across
+platforms.
 
-Beyond that, the current allocation becomes a "what if I weighted it
-differently": each asset has a slider (starting at its real weight) that,
-when moved, recalculates the pie/table and a simulated performance curve —
+The current allocation becomes a "what if I weighted it differently": each
+asset has a slider (starting at its real weight) that, when moved,
+proportionally rescales the other assets to keep the total at 100% and
+recalculates the donut chart and a simulated performance curve —
 recombining each asset's historical price (via `price_ref`, which each
 adapter exposes when it can map the asset to a chain:address pair
 recognized by DefiLlama) using the new weights. An asset with no available
 historical price is excluded from the simulation and listed as such, never
-invented.
+invented. The performance chart (and the comparison overlay) can show
+either an indexed value (base 100) or percent return, via a shared toggle.
 
 Caveat (repeated from the adapter): the underlying assets differ across the
 three platforms (tokenized stocks vs. crypto vs. crypto pools), and the
 "weight" in each comes from a different approximation — you can't directly
 compare the REAL performance curve across all three as if it were the same
 thing. The metric that's genuinely comparable between them is "who decides"
-and the rebalance frequency, shown in a separate card.
+and the rebalance frequency, shown in the protocol details section. The
+comparison overlay plots real performance side by side anyway, with a
+visible note that methodologies differ.
 """
 
 from __future__ import annotations
