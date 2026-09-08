@@ -21,6 +21,11 @@ TEXT_MUTED = "#9299a6"
 ACCENT = "#6ea8fe"
 GRID = "#242832"
 
+# Grayscale-only stand-in for the theme's ACCENT, used where a blue accent
+# would be too loud — currently just the active weight-scenario tab (see
+# the tab-bar CSS below); everything else keeps using ACCENT.
+NEUTRAL_HIGHLIGHT = "#454b57"
+
 # Applied to every series added to a chart, in order — restrained and
 # readable rather than a default rainbow, so a 2-3 series chart reads as
 # one system.
@@ -130,6 +135,61 @@ def inject_css() -> None:
         }}
         [data-testid="stMetricValue"] {{
             font-family: {MONO_FONT_FAMILY};
+        }}
+
+        /* Weight-scenario tab bar (app.py's render_tab_bar) — a hand-rolled
+        row of buttons styled to read as browser-like tabs, since st.tabs
+        can't host a per-tab close control or a trailing "+". Active vs.
+        inactive is Streamlit's own primary/secondary button styling (see
+        render_tab_bar); this CSS only handles spacing/shape and the row's
+        baseline. Selectors key off the `st-key-<key>` class Streamlit adds
+        to a widget's wrapper when it's given an explicit `key=` — the
+        frontend sanitizes the key for CSS by replacing every character
+        that isn't `[a-zA-Z0-9_-]` with `-`, so our `::`-separated keys
+        (e.g. `tabsel::Glider::...`) become `st-key-tabsel--Glider--...`;
+        matching on `st-key-tabsel--` (not `::`) is what actually hits. */
+        [class*="st-key-tabsel--"] button {{
+            width: 100%;
+            border-radius: 8px 8px 0 0;
+        }}
+        /* Active tab: a neutral gray fill instead of the theme's blue
+        primary color, so the tab bar reads as grayscale, not an accent
+        color. `stBaseButton-primary` is the data-testid Streamlit puts on
+        a button's `type="primary"` variant (see render_tab_bar). */
+        [class*="st-key-tabsel--"] [data-testid="stBaseButton-primary"] {{
+            background-color: {NEUTRAL_HIGHLIGHT} !important;
+            border-color: {NEUTRAL_HIGHLIGHT} !important;
+            color: {TEXT} !important;
+        }}
+        [class*="st-key-tabsel--"] [data-testid="stBaseButton-primary"]:hover {{
+            border-color: {TEXT_MUTED} !important;
+        }}
+        [class*="st-key-tabclose--"] button {{
+            padding-left: 0.4rem;
+            padding-right: 0.4rem;
+            opacity: 0.7;
+        }}
+        [class*="st-key-tabclose--"] button:hover {{
+            opacity: 1;
+        }}
+        /* "+" gets a visible outline rather than tertiary's borderless
+        look — it's a distinct action (open a tab), not a minor affordance
+        like "✕", so it should stand out at a glance. */
+        [class*="st-key-tabadd--"] button {{
+            padding-left: 0.6rem;
+            padding-right: 0.6rem;
+            border: 1px solid {TEXT_MUTED} !important;
+            color: {TEXT} !important;
+        }}
+        [class*="st-key-tabadd--"] button:hover {{
+            border-color: {TEXT} !important;
+            background-color: {SURFACE} !important;
+        }}
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-tabsel--"]) {{
+            align-items: flex-end;
+            border-bottom: 1px solid {BORDER};
+            margin-bottom: 0.75rem;
+            gap: 0.15rem !important;
         }}
         </style>
         """,
