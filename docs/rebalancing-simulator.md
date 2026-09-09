@@ -63,8 +63,12 @@ has a browser-style tab strip for its weight scenarios (see below).
   collapsed by default, at the bottom of the page.
 - **Footer** — `theme.render_footer()`, at the very end of the page:
   project name/subtitle, `FOOTER_LINK_SECTIONS` (GitHub/docs, the three
-  compared platforms, data sources) in columns, and a bottom disclaimer
-  line.
+  compared platforms, data sources) in columns — each link marked with a
+  small arrow-up-right icon, since all of them are external — a GitHub
+  icon button, and a bottom disclaimer line. Its background band spans
+  the full main content area (not capped at the ~1200px reading width the
+  rest of the page uses) via a CSS container-query trick — see the
+  `.app-footer` CSS comment in `ui/theme.py` for how and why.
 
 `.streamlit/config.toml` sets the base dark theme; `ui/theme.py` layers
 app-level CSS — extra top padding so the header isn't clipped under
