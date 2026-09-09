@@ -43,6 +43,11 @@ Research done:
   rebalance. We make this explicit in each history `description`
   (`"signal-driven"`), so as not to give the impression a decision was
   recorded like on Reserve.
+- QuantAMM has no curated discovery API of its own (unlike Reserve's
+  `GET /discover/dtfs`). `discover_baskets()` therefore queries the same
+  Balancer GraphQL API but is allowlisted to the QuantAMM site's featured
+  BTFs (`FEATURED_BTF_POOLS`) — the raw `QUANT_AMM_WEIGHTED` pool list also
+  includes test pools and a near-zero-TVL duplicate Safe Haven deployment.
 """
 
 from __future__ import annotations
@@ -69,7 +74,28 @@ MIN_WEIGHT_SHIFT_PCT = 1.0
 # format, e.g. MAINNET, BASE, SONIC).
 EXAMPLE_BASKETS = {
     "Safe Haven — BTC:PAXG:USDC (mainnet)": "MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5",
+    "Base Macro (base)": "BASE:0xb4161aea25bd6c5c8590ad50deb4ca752532f05d",
+    "Sonic Macro (sonic)": "SONIC:0x74dc857d5567a3b087e79b96b91cdc8099b2fa34",
 }
+
+# The QuantAMM site's featured BTFs — lowercase pool addresses. QuantAMM has
+# no curated discovery API (see module docstring), so `discover_baskets()`
+# allowlists to these three instead of returning every QUANT_AMM_WEIGHTED
+# pool Balancer knows about (which includes test pools and a near-zero-TVL
+# duplicate Safe Haven deployment). Add a new address here when the site
+# features another BTF.
+FEATURED_BTF_POOLS = frozenset(
+    {
+        "0x6b61d8680c4f9e560c8306807908553f95c749c5",  # Safe Haven (mainnet)
+        "0xb4161aea25bd6c5c8590ad50deb4ca752532f05d",  # Base Macro (base)
+        "0x74dc857d5567a3b087e79b96b91cdc8099b2fa34",  # Sonic Macro (sonic)
+    }
+)
+
+# Chains the featured BTFs above live on — the only chains discovery needs
+# to query (CHAIN_TO_DEFILLAMA below stays broader, for allocation
+# `price_ref` / manually pasted basket_ids on other chains).
+FEATURED_CHAINS = ["MAINNET", "BASE", "SONIC"]
 
 # Chain (Balancer's GqlChain enum) -> chain slug used by DefiLlama. Only the
 # chains where the two names diverge/are known — a chain outside this map
@@ -173,10 +199,10 @@ _DISCOVERY_PAGE_SIZE = 200
 
 
 def discover_baskets() -> list[dict[str, Any]]:
-    """Lists every QuantAMM pool (`poolTypeIn: [QUANT_AMM_WEIGHTED]`,
-    Balancer v3 only) across every chain in CHAIN_TO_DEFILLAMA, via the same
-    Balancer GraphQL API `_fetch_pool` uses — paginated with `skip` until a
-    page comes back short.
+    """Lists the QuantAMM site's featured BTFs (Safe Haven, Base Macro,
+    Sonic Macro — see `FEATURED_BTF_POOLS`), via the same Balancer GraphQL
+    API `_fetch_pool` uses — paginated with `skip` until a page comes back
+    short, queried only across `FEATURED_CHAINS`.
 
     Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by TVL
     descending (ties/missing TVL fall back to name). `tvl_usd` comes from
@@ -188,10 +214,12 @@ def discover_baskets() -> list[dict[str, Any]]:
     while True:
         data = _graphql(
             _POOLS_QUERY,
-            {"chains": list(CHAIN_TO_DEFILLAMA.keys()), "first": _DISCOVERY_PAGE_SIZE, "skip": skip},
+            {"chains": FEATURED_CHAINS, "first": _DISCOVERY_PAGE_SIZE, "skip": skip},
         )
         page = data.get("poolGetPools") or []
         for pool in page:
+            if pool["address"].lower() not in FEATURED_BTF_POOLS:
+                continue
             liquidity = pool.get("dynamicData") or {}
             try:
                 tvl_usd = float(liquidity["totalLiquidity"])
