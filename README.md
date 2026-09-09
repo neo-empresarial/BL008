@@ -57,7 +57,7 @@ populated from each platform's own discovery source, cached for an hour:
 
 - **Glider** — `discover_strategies` on the `"curated"` collection (requires `GLIDER_API_KEY`).
 - **Reserve** — the Goldsky Index DTF subgraph, across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) aren't in this subgraph and never appear here, even though one is pinned as an example to show the composition-unavailable limitation.
-- **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]`, across every chain in `CHAIN_TO_DEFILLAMA`.
+- **QuantAMM** — the Balancer GraphQL API, allowlisted to the QuantAMM site's three featured BTFs (Safe Haven, Base Macro, Sonic Macro) — there's no curated discovery API of its own, so the raw `poolTypeIn: [QUANT_AMM_WEIGHTED]` list (which also includes test pools and a near-zero-TVL duplicate Safe Haven deployment) is filtered down to `FEATURED_BTF_POOLS`.
 
 If discovery fails or returns nothing for a platform, the select falls back
 to that platform's pinned `EXAMPLE_BASKETS` with a warning explaining why —
@@ -120,7 +120,9 @@ manual `basket_id` entry always stays available regardless.
   on mainnet (`mainnet:0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F` —
   composition unavailable in this MVP, see above).
 - **QuantAMM/Balancer** — Safe Haven BTC:PAXG:USDC on mainnet
-  (`MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5`).
+  (`MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5`); Base Macro on base
+  (`BASE:0xb4161aea25bd6c5c8590ad50deb4ca752532f05d`); Sonic Macro on sonic
+  (`SONIC:0x74dc857d5567a3b087e79b96b91cdc8099b2fa34`).
 
 ## About each platform
 
@@ -158,7 +160,9 @@ manual `basket_id` entry always stays available regardless.
 ### QuantAMM / Balancer
 
 - QuantAMM pools are native Balancer v3 pools (type
-  `QUANT_AMM_WEIGHTED`) — no separate API of their own.
+  `QUANT_AMM_WEIGHTED`) — no separate API of their own, and no curated
+  discovery endpoint either; `discover_baskets()` allowlists to the site's
+  three featured BTFs (`FEATURED_BTF_POOLS` in `adapters/quantamm.py`).
 - Source: Balancer's public, no-key GraphQL API
   (`https://api-v3.balancer.fi/graphql`, confirmed by introspection).
   `poolTokens[].weight` gives the current weight; `weightSnapshots` gives a
