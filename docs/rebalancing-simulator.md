@@ -62,14 +62,21 @@ has a browser-style tab strip for its weight scenarios (see below).
   `st.expander("Protocol details")` (who decides + rebalance frequency),
   collapsed by default, at the bottom of the page.
 
-`.streamlit/config.toml` sets the base dark theme (sans-serif, minimal
-palette); `ui/theme.py` layers app-level CSS — extra top padding so the
-header isn't clipped under Streamlit's toolbar, rounded card-like
-chart/table surfaces with `overflow: hidden` so the rounding actually
-clips the chart's own background, address/link styling — and a shared
-Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of 420px) applied
-to every chart via `theme.apply_chart_theme`. Neither file touches data or
-adapter logic.
+`.streamlit/config.toml` sets the base dark theme; `ui/theme.py` layers
+app-level CSS — extra top padding so the header isn't clipped under
+Streamlit's toolbar, rounded card-like chart/table surfaces with
+`overflow: hidden` so the rounding actually clips the chart's own
+background, address/link styling — and a shared Plotly layout (colorway,
+fonts, a `DEFAULT_CHART_HEIGHT` of 420px) applied to every chart via
+`theme.apply_chart_theme`. Neither file touches data or adapter logic.
+
+The palette (both files) is ported from the `reclamm-monorepo` frontend's
+Chakra theme — see the constants' docstring in `ui/theme.py` for the exact
+token each color comes from. That frontend forces dark mode always, so
+this is that theme's `dark` token set, not a Streamlit-original palette;
+re-syncing after a reclamm palette change means re-reading those same
+token files and updating the hex constants here by hand (no shared
+package/build step ties the two).
 
 ### Adapter interface (implemented identically by all three adapters)
 
