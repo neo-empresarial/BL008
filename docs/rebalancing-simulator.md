@@ -31,9 +31,10 @@ of multiple example strategies across platforms. Invariants:
 ## Surface
 
 `app.py` is the entrypoint (`streamlit run app.py`), single page, no
-routing, no tabs, **no side-by-side columns for the main flow** — every
-section stacks vertically so the page scrolls naturally and the
-performance chart gets full page width.
+routing, **no side-by-side columns for the main flow** — every section
+stacks vertically so the page scrolls naturally and the performance chart
+gets full page width. The one exception is the Allocation section, which
+has a browser-style tab strip for its weight scenarios (see below).
 
 - **Sidebar** — platform picker; basket picker built from that platform's
   live `discover_baskets()` (curated `EXAMPLE_BASKETS` pinned at the top,
@@ -42,8 +43,11 @@ performance chart gets full page width.
   baskets, to pick strategies for the comparison overlay (`<Platform> /
   <label>` options) — see Basket discovery below.
 - **Header** — compact console header (platform badge, basket id).
-- **Allocation** — full-width section: methodology expander, reset button,
-  one row per asset (label, current %, slider), donut chart, table.
+- **Allocation** — full-width section: methodology expander, then a
+  hand-rolled tab strip (one button per weight scenario plus a "✕", and a
+  trailing ＋), and below it only the *active* scenario's editor — reset
+  button, one row per asset (label, current %, slider), donut chart, and
+  table. See Weight scenario tabs below.
 - **Performance** — full-width section. Its subheader and the chart-mode
   control (`st.segmented_control` when the installed Streamlit has it,
   else `st.radio(horizontal=True)`) share one row via `st.columns`, so the
@@ -196,14 +200,67 @@ can be compared) and flattens them into `"{platform} / {label}"` options —
 this can be a long list (Reserve alone discovers 300+ Index DTFs at the
 time of writing); there is no search/filter on top of it yet.
 
-**Proportional allocation rebalancing.** Each basket's committed weights
-are tracked in `st.session_state["prev_w::{platform}::{basket_id}"]`. On
-each rerun, `app.py` compares each slider's pending value (from
-`st.session_state`) against that basket's last committed weights:
+**Weight scenario tabs.** Each basket can hold several independent weight
+scenarios ("tabs"), so different what-if allocations can be tweaked
+separately and compared on the same performance chart. `get_scenarios`
+stores the tab list at `st.session_state["scenarios::{platform}::{basket_id}"]`
+as `list[{"id", "label"}]`, seeded with one `"Scenario 1"` tab the first
+time a basket is opened.
 
-- **0 or 2+ assets differ** (basket/platform just switched, or first
-  render) — the pending values are used as-is (i.e. the real weights on
-  first load).
+`render_tab_bar` draws the strip itself and owns which tab is *active*
+(`st.session_state["active_scenario::{platform}::{basket_id}"]`) — `st.tabs`
+isn't used here because it can't host a per-tab close control or a
+trailing "+", so the strip is hand-rolled from one row of `st.columns`
+instead (styled to read as tabs by `ui/theme.py`'s CSS, keyed off the
+`st-key-<key>` class Streamlit gives a widget with an explicit `key=`).
+Per scenario it renders a select button (`type="primary"` when active, so
+Streamlit's own accent styling *is* the "active tab" look) plus a small
+"✕" (`type="tertiary"`, disabled once only one tab remains). Streamlit has
+no double-click event to bind a rename to, so clicking a tab that's
+*already* active is the stand-in: instead of switching (there's nowhere
+else to switch to) or doing nothing, it swaps that tab's select button for
+an inline `text_input` prefilled with the current label. Renaming commits
+via the `text_input`'s `on_change` callback (`_commit_rename`) rather than
+a separate confirm button — Streamlit calls it the instant the value
+changes (Enter or losing focus) and reruns the script right after, so
+typing a name and pressing Enter (or clicking elsewhere) is enough; an
+emptied-out value is ignored rather than leaving a tab unnamed. A trailing
+"＋" (also `type="tertiary"`) appends a new scenario (`uuid4().hex[:8]`
+id, default label `"Scenario {n}"`) and makes it active.
+
+Because the row's column widths are computed from the *current* scenario
+list/active id at the top of the function, a button click that changes
+either (switch tabs, enter rename mode, add, or close) calls `st.rerun()`
+before returning — otherwise the strip would only reflect the change one
+interaction later, since writing to `st.session_state` alone doesn't
+trigger a second rerun by itself. A rename *commit* doesn't need this: its
+`on_change` callback already runs (and already updated `scenario["label"]`
+and cleared the renaming flag in `st.session_state`) before `render_tab_bar`
+is even called again on the rerun the callback itself triggers.
+
+Only the *active* scenario's editor is rendered below the strip each run —
+like a browser tab, every other scenario's content stays hidden.
+`render_scenario_editor` is that editor (the direct successor of what used
+to be the single, un-tabbed allocation editor); it takes one `scenario`
+dict and returns its committed weights. A scenario that isn't active this
+run keeps its last committed weights in `st.session_state` regardless
+(see below) — nothing is lost by switching away from it, and the
+Performance section (further down) reads every scenario's weights back
+from `st.session_state` directly rather than depending on it having been
+rendered this run.
+
+**Proportional allocation rebalancing.** Each tab's committed weights are
+tracked in
+`st.session_state["prev_w::{platform}::{basket_id}::{scenario_id}"]` —
+scoped by scenario id in addition to platform/basket, so tabs never share
+slider state and switching platform/basket starts every tab fresh rather
+than reusing another basket's scenarios. On each rerun, `render_scenario_editor`
+compares each of that tab's slider pending values (from `st.session_state`)
+against that tab's last committed weights:
+
+- **0 or 2+ assets differ** (basket/platform just switched, this tab was
+  just created, or first render) — the pending values are used as-is (i.e.
+  the real weights on first load).
 - **Exactly 1 asset differs** (the normal case — the user dragged one
   slider) — that asset keeps its new value; every other asset is scaled
   proportionally, by its share of the *previous* total of the other
@@ -239,24 +296,38 @@ usable price, simulation is skipped entirely for that series (no chart
 series is added; for Adjusted, a caption explains why — HODL fails silently
 since it's a secondary series).
 
-**Performance chart series.** Up to three series are plotted together,
-built independently and only added when data is available:
+**Performance chart series.** Two fixed series plus one Adjusted series
+per open weight-scenario tab are plotted together, built independently and
+only added when data is available:
 
-| Series constant | Source | Reacts to sliders? |
+| Series | Source | Reacts to sliders? |
 |---|---|---|
 | `SERIES_REAL` = "Real strategy (with rebalancing)" | `get_performance` — the platform's own method/source | No — platform data |
 | `SERIES_HODL` = "HODL (real weights, no rebalancing)" | `simulate_weighted_performance` over `real_weights` (the basket's actual current weights, from `get_current_allocation`) | No — always the real weights |
-| `SERIES_ADJUSTED` = "Adjusted buy-and-hold (your weights)" | `simulate_weighted_performance` over `edited_weights` (the committed slider weights) | Yes |
+| `adjusted_series_label(scenario["label"])` = "Adjusted buy-and-hold ({tab name})", one per tab | `simulate_weighted_performance` over that tab's committed weights (`scenario_edited_weights[scenario["id"]]`) | Yes — that tab's sliders only |
 
-With the sliders at their real/reset values, HODL and Adjusted use the
-same weights and should track closely (not necessarily identically — HODL
-and Adjusted are computed independently, and each can silently exclude a
-different asset only if their weight sets differ, which they don't at
-reset — in practice they match). Real can differ from both even then,
-because Real reflects whatever rebalancing the platform actually performed
-over time, while HODL/Adjusted assume the weights were fixed for the whole
-`SIMULATION_DAYS` window. The "How to read this chart" expander above the
-chart states this in user-facing language.
+`app.py` loops every scenario in the tab list and reads its committed
+weights back from `st.session_state["prev_w::{platform}::{basket_id}::{scenario_id}"]`
+(falling back to `real_weights` for a tab that was added but never
+rendered/edited yet), then calls `simulate_weighted_performance` once per
+tab — so adding a tab adds one more Adjusted line to the chart rather than
+replacing the existing one, and a tab that isn't the active one this run
+still contributes its line (see Weight scenario tabs above). This is what
+makes tab-to-tab comparison possible. Excluded assets are unioned across
+every tab's simulation into a single caption (exclusion depends only on
+price availability, not on a tab's weights, so in practice every tab
+excludes the same assets).
+
+With a tab's sliders at their real/reset values, HODL and that tab's
+Adjusted line use the same weights and should track closely (not
+necessarily identically — HODL and Adjusted are computed independently,
+and each can silently exclude a different asset only if their weight sets
+differ, which they don't at reset — in practice they match). Real can
+differ from both even then, because Real reflects whatever rebalancing the
+platform actually performed over time, while HODL/Adjusted assume the
+weights were fixed for the whole `SIMULATION_DAYS` window. The "How to
+read this chart" expander above the chart states this in user-facing
+language.
 
 **Chart mode.** `CHART_MODES = ["Indexed value", "Percent return", "Growth
 of $10k"]`. The control (`st.segmented_control` or `st.radio` fallback,

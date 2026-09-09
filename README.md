@@ -18,6 +18,13 @@ layout to make side-by-side comparison easier.
   differently"** — e.g. changing Mag7 from equal-weight (100/7 each) to any
   other concentration. Sliders start at the real weights and are normalized
   to sum to 100%; a button resets to the real weights.
+  - You can open **multiple independent weight tabs** for the same basket,
+    browser-style: click **＋** next to the tabs to open one, click a tab to
+    switch to it, click the tab you're already on again to rename it, **✕**
+    to close it. Each tab keeps its own sliders, donut chart and table, and
+    every tab's simulated curve — even ones you're not currently looking
+    at — is overlaid together on the performance chart below so you can
+    compare them directly.
 - Shows the **rebalance history** — the real log of when and how each
   basket's weight changed. The nature of this log is quite different per
   platform (see "About each platform" below):
