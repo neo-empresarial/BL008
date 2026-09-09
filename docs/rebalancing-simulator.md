@@ -93,6 +93,25 @@ arbitrarily). `granite-1.jpg` and `favicon-light.png` are staged but
 unused so far — reserved for a follow-up (per-chart granite backgrounds,
 page favicon).
 
+**Donut ring background.** The Allocation section's donut chart (`fig =
+px.pie(...)`) sits on a CSS-only, static approximation of reclamm's
+`RadialPattern` (concentric rings): four faint `radial-gradient` rings on
+a `::before` behind `[data-testid="stPlotlyChart"]`, scoped to that one
+chart via a `st-key-pie--` class (`st.plotly_chart(..., key=f"{theme.PIE_KEY_PREFIX}::...")`)
+so the other Plotly charts are untouched. `theme.make_chart_transparent`
+clears the pie figure's own `paper_bgcolor`/`plot_bgcolor` (set by
+`apply_chart_theme`) so the rings show through instead of being painted
+over. On hover, only the ring layer scales (`transform: scale(1.03)`,
+mirroring reclamm's `_groupHover` on just the `RadialPattern`, not the
+whole card) — the chart itself is never transformed, so Plotly's own
+hover/tooltip/toolbar behavior is unaffected. The rings' center is
+nudged via a fixed pixel offset (`background-position: calc(50% - 40px)
+calc(50% + 14px)`) to approximate the donut's true visual center, which
+sits left of and below the card's geometric center because of the legend
+(right) and title (top) — measured empirically against the default
+layout/margins in `PLOTLY_LAYOUT`, so it drifts at very different card
+widths than what was measured against.
+
 ### Adapter interface (implemented identically by all three adapters)
 
 | Function | Returns |
