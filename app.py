@@ -522,9 +522,9 @@ def render_scenario_editor(
         hole=0.55,
     )
     st.plotly_chart(
-        theme.make_chart_transparent(theme.apply_chart_theme(fig)),
+        theme.apply_chart_theme(fig),
         width="stretch",
-        key=f"{theme.PIE_KEY_PREFIX}::{platform_name}::{basket_id}::{scenario_id}",
+        key=f"pie::{platform_name}::{basket_id}::{scenario_id}",
     )
     st.dataframe(
         df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),

@@ -74,13 +74,6 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(hex_color[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
 
 
-def _ring_rgba(alpha: float) -> str:
-    """`rgba()` of TEXT at `alpha` — the donut ring pattern's color (see
-    the `st-key-pie--` CSS in `inject_css`)."""
-    r, g, b = _hex_to_rgb(TEXT)
-    return f"rgba({r},{g},{b},{alpha})"
-
-
 def _noise_background_css() -> str:
     """Two-layer `background-image` for `.stApp`, replicating reclamm's
     `Noise` component: the grain PNG tiled full-page, with a near-opaque
@@ -129,24 +122,6 @@ def apply_chart_theme(fig):
     return fig
 
 
-def make_chart_transparent(fig):
-    """Clears a figure's paper/plot background so a CSS background behind
-    its `[data-testid="stPlotlyChart"]` container (e.g. the donut's ring
-    pattern — see `PIE_KEY_PREFIX` CSS in `inject_css`) shows through
-    instead of Plotly's own solid `paper_bgcolor`/`plot_bgcolor`. Call
-    after `apply_chart_theme`, only for charts meant to sit on such a
-    background — other charts keep the solid SURFACE Plotly paints."""
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-    return fig
-
-
-# `st.plotly_chart(..., key=f"pie::...")`'s wrapper gets a `st-key-pie--...`
-# class (see the tab-bar CSS comment below for how Streamlit sanitizes
-# `key=` into a class name) — this prefix is what the ring-background CSS
-# in `inject_css` keys off of, so it hits only the donut chart.
-PIE_KEY_PREFIX = "pie"
-
-
 def inject_css() -> None:
     """Injects app-level CSS: readable sans-serif typography, extra top
     padding so the header isn't clipped under Streamlit's toolbar, rounded
@@ -176,52 +151,6 @@ def inject_css() -> None:
             padding: 0.5rem;
             background-color: {SURFACE};
             overflow: hidden;
-        }}
-
-        /* Donut chart ring background — a CSS-only approximation of
-        reclamm's `RadialPattern` (concentric rings, `FeaturePoolCard`'s
-        large/faint use of it as a card backdrop). `make_chart_transparent`
-        clears the pie figure's own paper/plot background so these rings
-        show through the donut's hole and the space around its wedges;
-        `[class*="st-key-pie--"]` scopes this to that one chart (see
-        `PIE_KEY_PREFIX`) — other Plotly charts keep the solid SURFACE
-        `[data-testid="stPlotlyChart"]` rule above already gives them.
-        Only the ring layer scales on hover (not the chart itself), so
-        Plotly's own hover/tooltip behavior is untouched — matching how
-        reclamm scales just the RadialPattern, not its whole card, on
-        `_groupHover`. */
-        [class*="st-key-{PIE_KEY_PREFIX}--"] {{
-            position: relative;
-        }}
-        [class*="st-key-{PIE_KEY_PREFIX}--"]::before {{
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: 0;
-            pointer-events: none;
-            background-repeat: no-repeat;
-            /* The donut's true center sits left of and below the card's
-            geometric center — Plotly's legend (right) and title (top)
-            eat space the rest of the domain doesn't, shifting the pie
-            within it. Offsets measured empirically against the default
-            layout/margins in PLOTLY_LAYOUT; only approximate, since a
-            static rule can't track the actual rendered SVG per width. */
-            background-position: calc(50% - 40px) calc(50% + 14px);
-            background-size: 480px 480px;
-            background-image:
-                radial-gradient(circle, transparent 38%, {_ring_rgba(0.05)} 39% 40%, transparent 41%),
-                radial-gradient(circle, transparent 52%, {_ring_rgba(0.04)} 53% 54%, transparent 55%),
-                radial-gradient(circle, transparent 66%, {_ring_rgba(0.03)} 67% 68%, transparent 69%),
-                radial-gradient(circle, transparent 80%, {_ring_rgba(0.02)} 81% 82%, transparent 83%);
-            transition: transform 0.3s ease-out;
-        }}
-        [class*="st-key-{PIE_KEY_PREFIX}--"]:hover::before {{
-            transform: scale(1.03);
-        }}
-        [class*="st-key-{PIE_KEY_PREFIX}--"] [data-testid="stPlotlyChart"] {{
-            position: relative;
-            z-index: 1;
-            background-color: transparent;
         }}
         .console-header {{
             display: flex;
