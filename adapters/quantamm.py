@@ -44,10 +44,11 @@ Research done:
   (`"signal-driven"`), so as not to give the impression a decision was
   recorded like on Reserve.
 - QuantAMM has no curated discovery API of its own (unlike Reserve's
-  `GET /discover/dtfs`). `discover_baskets()` therefore queries the same
-  Balancer GraphQL API but is allowlisted to the QuantAMM site's featured
-  BTFs (`FEATURED_BTF_POOLS`) — the raw `QUANT_AMM_WEIGHTED` pool list also
-  includes test pools and a near-zero-TVL duplicate Safe Haven deployment.
+  `GET /discover/dtfs`). The raw `QUANT_AMM_WEIGHTED` pool list also
+  includes test pools and a duplicate Safe Haven deployment — Balancer
+  itself tags those `BLACK_LISTED` (confirmed via `poolGetPools.tags`), so
+  `discover_baskets()` excludes that tag server-side (`where.tagNotIn`)
+  instead of hardcoding pool addresses.
 """
 
 from __future__ import annotations
@@ -78,24 +79,10 @@ EXAMPLE_BASKETS = {
     "Sonic Macro (sonic)": "SONIC:0x74dc857d5567a3b087e79b96b91cdc8099b2fa34",
 }
 
-# The QuantAMM site's featured BTFs — lowercase pool addresses. QuantAMM has
-# no curated discovery API (see module docstring), so `discover_baskets()`
-# allowlists to these three instead of returning every QUANT_AMM_WEIGHTED
-# pool Balancer knows about (which includes test pools and a near-zero-TVL
-# duplicate Safe Haven deployment). Add a new address here when the site
-# features another BTF.
-FEATURED_BTF_POOLS = frozenset(
-    {
-        "0x6b61d8680c4f9e560c8306807908553f95c749c5",  # Safe Haven (mainnet)
-        "0xb4161aea25bd6c5c8590ad50deb4ca752532f05d",  # Base Macro (base)
-        "0x74dc857d5567a3b087e79b96b91cdc8099b2fa34",  # Sonic Macro (sonic)
-    }
-)
-
-# Chains the featured BTFs above live on — the only chains discovery needs
-# to query (CHAIN_TO_DEFILLAMA below stays broader, for allocation
-# `price_ref` / manually pasted basket_ids on other chains).
-FEATURED_CHAINS = ["MAINNET", "BASE", "SONIC"]
+# Balancer's own moderation tag for test/duplicate pools (confirmed via
+# poolGetPools.tags — see module docstring). Excluded from discovery via
+# `where.tagNotIn` instead of an address allowlist.
+EXCLUDED_POOL_TAG = "BLACK_LISTED"
 
 # Chain (Balancer's GqlChain enum) -> chain slug used by DefiLlama. Only the
 # chains where the two names diverge/are known — a chain outside this map
@@ -181,11 +168,16 @@ def _fetch_pool(chain: str, address: str) -> dict[str, Any]:
 
 
 _POOLS_QUERY = """
-query ListQuantAmmPools($chains: [GqlChain!]!, $first: Int!, $skip: Int!) {
+query ListQuantAmmPools($chains: [GqlChain!]!, $first: Int!, $skip: Int!, $excludedTag: String!) {
   poolGetPools(
     first: $first
     skip: $skip
-    where: { chainIn: $chains, poolTypeIn: [QUANT_AMM_WEIGHTED], protocolVersionIn: [3] }
+    where: {
+      chainIn: $chains
+      poolTypeIn: [QUANT_AMM_WEIGHTED]
+      protocolVersionIn: [3]
+      tagNotIn: [$excludedTag]
+    }
   ) {
     address
     chain
@@ -199,10 +191,11 @@ _DISCOVERY_PAGE_SIZE = 200
 
 
 def discover_baskets() -> list[dict[str, Any]]:
-    """Lists the QuantAMM site's featured BTFs (Safe Haven, Base Macro,
-    Sonic Macro — see `FEATURED_BTF_POOLS`), via the same Balancer GraphQL
-    API `_fetch_pool` uses — paginated with `skip` until a page comes back
-    short, queried only across `FEATURED_CHAINS`.
+    """Lists QuantAMM's real BTFs across every chain in CHAIN_TO_DEFILLAMA,
+    via the same Balancer GraphQL API `_fetch_pool` uses — paginated with
+    `skip` until a page comes back short, excluding pools Balancer itself
+    tags `BLACK_LISTED` (test pools and duplicate deployments — see module
+    docstring).
 
     Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by TVL
     descending (ties/missing TVL fall back to name). `tvl_usd` comes from
@@ -214,12 +207,15 @@ def discover_baskets() -> list[dict[str, Any]]:
     while True:
         data = _graphql(
             _POOLS_QUERY,
-            {"chains": FEATURED_CHAINS, "first": _DISCOVERY_PAGE_SIZE, "skip": skip},
+            {
+                "chains": list(CHAIN_TO_DEFILLAMA.keys()),
+                "first": _DISCOVERY_PAGE_SIZE,
+                "skip": skip,
+                "excludedTag": EXCLUDED_POOL_TAG,
+            },
         )
         page = data.get("poolGetPools") or []
         for pool in page:
-            if pool["address"].lower() not in FEATURED_BTF_POOLS:
-                continue
             liquidity = pool.get("dynamicData") or {}
             try:
                 tvl_usd = float(liquidity["totalLiquidity"])
