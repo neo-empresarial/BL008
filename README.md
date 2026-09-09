@@ -192,9 +192,13 @@ BL008/
     pricing.py             # historical price per asset (DefiLlama), used by the weight simulator
   ui/
     __init__.py
-    theme.py                # dark console CSS + shared Plotly theme
+    theme.py                # dark console CSS + footer + shared Plotly theme
   .streamlit/
     config.toml             # base dark Streamlit theme
+  public/
+    background-noise.png    # page-wide grain texture (ported from reclamm-monorepo)
+    granite-1.jpg           # staged for a future per-chart background, unused so far
+    favicon-light.png       # staged for a future page favicon, unused so far
   .env.example
   requirements.txt
   README.md

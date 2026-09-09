@@ -365,7 +365,7 @@ def render_tab_bar(platform_name: str, basket_id: str, scenarios: list[dict]) ->
                     scenario["label"],
                     key=f"tabsel::{platform_name}::{basket_id}::{scenario['id']}",
                     type="primary" if is_active else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 if clicked:
                     if is_active:
@@ -523,12 +523,12 @@ def render_scenario_editor(
     )
     st.plotly_chart(
         theme.apply_chart_theme(fig),
-        use_container_width=True,
+        width="stretch",
         key=f"pie::{platform_name}::{basket_id}::{scenario_id}",
     )
     st.dataframe(
         df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         key=f"table::{platform_name}::{basket_id}::{scenario_id}",
     )
@@ -784,7 +784,7 @@ if perf_frames:
         title=f"Performance — real vs. HODL vs. adjusted ({chart_mode.lower()})",
         labels={"date": "Date", "display_value": y_label},
     )
-    st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
+    st.plotly_chart(theme.apply_chart_theme(fig_perf), width="stretch")
 
 # --- strategy comparison overlay --------------------------------------------
 
@@ -818,7 +818,7 @@ else:
             title=f"Strategy comparison ({chart_mode.lower()})",
             labels={"date": "Date", "display_value": y_label},
         )
-        st.plotly_chart(theme.apply_chart_theme(fig_comparison), use_container_width=True)
+        st.plotly_chart(theme.apply_chart_theme(fig_comparison), width="stretch")
         st.caption(
             "Each series uses its own platform's native performance method/source — "
             "methodologies differ across platforms (see adapter docstrings), so this "
@@ -845,7 +845,7 @@ with st.expander("Rebalance history"):
                 for h in reversed(history)  # most recent first
             ]
         )
-        st.dataframe(df_history, use_container_width=True, hide_index=True)
+        st.dataframe(df_history, width="stretch", hide_index=True)
 
 with st.expander("Protocol details"):
     st.caption(
@@ -864,3 +864,5 @@ with st.expander("Protocol details"):
             st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
         else:
             st.write("No history available to estimate.")
+
+theme.render_footer()
