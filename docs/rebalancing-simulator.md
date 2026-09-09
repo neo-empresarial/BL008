@@ -61,14 +61,19 @@ has a browser-style tab strip for its weight scenarios (see below).
 - **Secondary sections** — `st.expander("Rebalance history")` and
   `st.expander("Protocol details")` (who decides + rebalance frequency),
   collapsed by default, at the bottom of the page.
+- **Footer** — `theme.render_footer()`, at the very end of the page:
+  project name/subtitle, `FOOTER_LINK_SECTIONS` (GitHub/docs, the three
+  compared platforms, data sources) in columns, and a bottom disclaimer
+  line.
 
 `.streamlit/config.toml` sets the base dark theme; `ui/theme.py` layers
 app-level CSS — extra top padding so the header isn't clipped under
 Streamlit's toolbar, rounded card-like chart/table surfaces with
 `overflow: hidden` so the rounding actually clips the chart's own
-background, address/link styling — and a shared Plotly layout (colorway,
-fonts, a `DEFAULT_CHART_HEIGHT` of 420px) applied to every chart via
-`theme.apply_chart_theme`. Neither file touches data or adapter logic.
+background, address/link styling, a page-wide grain texture, the footer —
+and a shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
+420px) applied to every chart via `theme.apply_chart_theme`. Neither file
+touches data or adapter logic.
 
 The palette (both files) is ported from the `reclamm-monorepo` frontend's
 Chakra theme — see the constants' docstring in `ui/theme.py` for the exact
@@ -77,6 +82,16 @@ this is that theme's `dark` token set, not a Streamlit-original palette;
 re-syncing after a reclamm palette change means re-reading those same
 token files and updating the hex constants here by hand (no shared
 package/build step ties the two).
+
+`public/` holds three assets ported from the same frontend
+(`reclamm-monorepo/apps/reclamm-frontend/public/images/`):
+`background-noise.png` is tiled full-page by `theme._noise_background_css`
+under a 97%-opaque layer of the page background — replicating reclamm's
+`Noise` component's two-layer approach in a single CSS `background-image`
+rule (no extra wrapper element, since Streamlit's DOM isn't ours to nest
+arbitrarily). `granite-1.jpg` and `favicon-light.png` are staged but
+unused so far — reserved for a follow-up (per-chart granite backgrounds,
+page favicon).
 
 ### Adapter interface (implemented identically by all three adapters)
 
