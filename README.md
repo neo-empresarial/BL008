@@ -56,7 +56,7 @@ populated from each platform's own discovery source, cached for an hour:
 
 - **Glider** — `discover_strategies` on the `"curated"` collection (requires `GLIDER_API_KEY`).
 - **Reserve** — Reserve's official discovery API (`GET /discover/dtfs`), filtered to active Index DTFs across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) are filtered out here, even though one is pinned as an example to show the composition-unavailable limitation. Allocation/history/performance use the same API family (see Data sources below), not discovery alone.
-- **QuantAMM** — the Balancer GraphQL API, allowlisted to the QuantAMM site's three featured BTFs (Safe Haven, Base Macro, Sonic Macro) — there's no curated discovery API of its own, so the raw `poolTypeIn: [QUANT_AMM_WEIGHTED]` list (which also includes test pools and a near-zero-TVL duplicate Safe Haven deployment) is filtered down to `FEATURED_BTF_POOLS`.
+- **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]` across every chain in `CHAIN_TO_DEFILLAMA`, excluding pools Balancer itself tags `BLACK_LISTED` (test pools and a duplicate Safe Haven deployment) — currently Safe Haven, Base Macro and Sonic Macro.
 
 If discovery fails or returns nothing for a platform, the select falls back
 to that platform's pinned `EXAMPLE_BASKETS` with a warning explaining why —
@@ -165,8 +165,9 @@ manual `basket_id` entry always stays available regardless.
 
 - QuantAMM pools are native Balancer v3 pools (type
   `QUANT_AMM_WEIGHTED`) — no separate API of their own, and no curated
-  discovery endpoint either; `discover_baskets()` allowlists to the site's
-  three featured BTFs (`FEATURED_BTF_POOLS` in `adapters/quantamm.py`).
+  discovery endpoint either; `discover_baskets()` excludes pools tagged
+  `BLACK_LISTED` (`EXCLUDED_POOL_TAG` in `adapters/quantamm.py`) instead of
+  hardcoding pool addresses.
 - Source: Balancer's public, no-key GraphQL API
   (`https://api-v3.balancer.fi/graphql`, confirmed by introspection).
   `poolTokens[].weight` gives the current weight; `weightSnapshots` gives a
