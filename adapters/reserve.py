@@ -75,6 +75,12 @@ INDEX_SUBGRAPH_URLS = {
     "bsc": f"{GOLDSKY_BASE}/dtf-index-bsc/prod/gn",
 }
 
+RESERVE_API_BASE = "https://api.reserve.org"
+
+# Chain ids as returned by the Reserve discovery API, mapped to the chain
+# keys the rest of this adapter (Goldsky subgraphs, DefiLlama) understands.
+CHAIN_ID_TO_KEY = {1: "mainnet", 8453: "base", 56: "bsc"}
+
 # DefiLlama uses these same chain names as a prefix in coins.llama.fi.
 DEFILLAMA_CHAIN_PREFIX = {"mainnet": "ethereum", "base": "base", "bsc": "bsc"}
 
@@ -168,54 +174,57 @@ def _fetch_rebalances(chain_key: str, address: str) -> list[dict[str, Any]]:
     return data.get("rebalances") or []
 
 
-_DTFS_QUERY = """
-query ListDtfs($first: Int!, $skip: Int!) {
-  dtfs(first: $first, skip: $skip, orderBy: id) {
-    id
-    token {
-      symbol
-      name
-    }
-  }
-}
-"""
+def _reserve_get(path: str) -> Any:
+    url = f"{RESERVE_API_BASE}{path}"
+    try:
+        response = requests.get(url, timeout=DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise ReserveAPIError(f"Network failure querying Reserve API: {exc}") from exc
 
-_DISCOVERY_PAGE_SIZE = 200
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise ReserveAPIError(
+            f"Invalid response (not JSON) from Reserve API — status {response.status_code}"
+        ) from exc
+
+    if not response.ok:
+        raise ReserveAPIError(f"Error in Reserve API: {body if body else response.status_code}")
+
+    return body
 
 
 def discover_baskets() -> list[dict[str, Any]]:
-    """Lists every Index DTF across all supported chains (mainnet, base,
-    bsc), via the same Goldsky subgraphs `_fetch_rebalances` uses — paginated
-    with `skip` until a page comes back short. **Index DTFs only**: this
-    subgraph has no Yield DTF entities (see module docstring), so Yield DTFs
-    like eUSD never appear here even though `EXAMPLE_BASKETS` pins one for
-    illustration.
+    """Lists Reserve's official active Index DTFs, via
+    `GET /discover/dtfs` — the same catalog the Reserve site itself shows.
+    Only `type == "index"` and `status == "active"` rows are kept, and only
+    on chains the rest of this adapter supports (mainnet, base, bsc); Yield
+    DTFs like eUSD are excluded here even though `EXAMPLE_BASKETS` pins one
+    for illustration.
 
-    Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by name.
-    `tvl_usd` is always None — this subgraph has no TVL field; use
-    `get_tvl_usd_defillama()` for a protocol-wide cross-check instead.
+    Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by
+    descending `tvl_usd` then by `name` — matching the Reserve site
+    ordering. `tvl_usd` comes from the API's `marketCap`.
     """
+    dtfs = _reserve_get("/discover/dtfs") or []
     rows: list[dict[str, Any]] = []
-    for chain_key, url in INDEX_SUBGRAPH_URLS.items():
-        skip = 0
-        while True:
-            data = _graphql(url, _DTFS_QUERY, {"first": _DISCOVERY_PAGE_SIZE, "skip": skip})
-            page = data.get("dtfs") or []
-            for dtf in page:
-                token = dtf.get("token") or {}
-                name = token.get("symbol") or token.get("name") or dtf.get("id")
-                rows.append(
-                    {
-                        "basket_id": f"{chain_key}:{dtf['id']}",
-                        "name": name,
-                        "tvl_usd": None,
-                        "chain": chain_key,
-                    }
-                )
-            if len(page) < _DISCOVERY_PAGE_SIZE:
-                break
-            skip += _DISCOVERY_PAGE_SIZE
-    return sorted(rows, key=lambda r: r["name"])
+    for dtf in dtfs:
+        if dtf.get("type") != "index" or dtf.get("status") != "active":
+            continue
+        chain_key = CHAIN_ID_TO_KEY.get(dtf.get("chainId"))
+        if chain_key is None:
+            continue
+        address = dtf.get("address")
+        name = dtf.get("symbol") or dtf.get("name") or address
+        rows.append(
+            {
+                "basket_id": f"{chain_key}:{address.lower()}",
+                "name": name,
+                "tvl_usd": _to_float(dtf.get("marketCap")),
+                "chain": chain_key,
+            }
+        )
+    return sorted(rows, key=lambda r: (-(r["tvl_usd"] or 0.0), r["name"]))
 
 
 def _asset_row(token: dict[str, Any], weight_pct: float, chain_key: str) -> dict[str, Any]:
