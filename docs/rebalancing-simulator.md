@@ -191,7 +191,7 @@ Per-adapter discovery source and scope:
 | Adapter | Source | Scope |
 |---|---|---|
 | `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
-| `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example |
+| `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example. Allocation/history use `GET /dtf/rebalance` (Goldsky weights by nonce; discover `basket` fallback); performance uses DefiLlama then `GET /historical/dtf` |
 | `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | Chains outside `CHAIN_TO_DEFILLAMA` are never queried |
 
 The comparison multi-select in the sidebar calls `build_basket_options` for
@@ -383,13 +383,15 @@ comparison entry) never takes down the rest of the page.
   the comparison overlay carries an explicit caption saying so, and the
   one metric framed as directly comparable is who decides a rebalance and
   how often (protocol details section).
-- No governance-proposal linkage for Reserve rebalances — the Goldsky
-  subgraph has no FK between a `Rebalance` and the proposal that approved
-  it, so `description` never names a specific proposal (documented TODO in
-  `adapters/reserve.py`).
-- No composition or rebalance history for Reserve **Yield DTFs** (e.g.
-  eUSD) — `get_current_allocation`/`get_rebalance_history` raise
-  `ReserveAPIError` for these instead of returning partial or guessed data.
+- No governance-proposal linkage for Reserve rebalances — the public
+  surfaces used here have no FK between a rebalance and the proposal that
+  approved it, so `description` never names a specific proposal
+  (documented TODO in `adapters/reserve.py`).
+- No composition for Reserve **Yield DTFs** (e.g. eUSD) —
+  `get_current_allocation` raises `ReserveAPIError` instead of returning
+  partial or guessed data. Index DTFs with no on-chain rebalances yet
+  return `[]` from `get_rebalance_history` and take allocation from
+  discover `basket[].weight`.
 - No search/filter on the basket selects — with dozens of discovered
   baskets on some platforms, the plain select can be long; search/filter is
   future work.
@@ -431,11 +433,15 @@ comparison entry) never takes down the rest of the page.
 - **HODL and Adjusted can look identical at reset — that's expected, not a
   bug.** Both use the same real weights and the same simulation path at
   that point; see Rules and behavior for why Real still differs.
-- **Reserve weights are by token quantity, not USD value.**
-  `weight_pct` for Reserve is `weightSpotLimit` normalized by its own sum —
-  it does **not** account for each token's price. Two DTFs holding the same
-  quantity ratio but very different token prices will show the same
-  `weight_pct` despite very different USD allocations.
+- **Reserve weight semantics depend on the source.** Goldsky-backed
+  rebalance weights are `weightSpotLimit` normalized by quantity (not USD).
+  Weights from `/dtf/rebalance&nonce=` detail are USD-approximate
+  (proposal units × prices). Discover fallback weights are already 0–100
+  from `basket[].weight`. Two quantity-normalized rows with the same ratio
+  can still imply different USD allocations.
+- **Reserve performance may come from DefiLlama or `/historical/dtf`.**
+  DefiLlama is tried first; young or thinly listed DTF tokens often only
+  resolve via the Reserve historical price series.
 - **QuantAMM's rebalance history is filtered, not raw.** Only snapshots
   where the largest weight shift exceeds `MIN_WEIGHT_SHIFT_PCT` (1.0
   percentage point) become a row. The pool's underlying weight curve is
