@@ -56,7 +56,7 @@ populated from each platform's own discovery source, cached for an hour:
 
 - **Glider** — `discover_strategies` on the `"curated"` collection (requires `GLIDER_API_KEY`).
 - **Reserve** — Reserve's official discovery API (`GET /discover/dtfs`), filtered to active Index DTFs across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) are filtered out here, even though one is pinned as an example to show the composition-unavailable limitation. Allocation/history/performance use the same API family (see Data sources below), not discovery alone.
-- **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]`, across every chain in `CHAIN_TO_DEFILLAMA`.
+- **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]` across every chain in `CHAIN_TO_DEFILLAMA`, excluding pools Balancer itself tags `BLACK_LISTED` (test pools and a duplicate Safe Haven deployment) — currently Safe Haven, Base Macro and Sonic Macro.
 
 If discovery fails or returns nothing for a platform, the select falls back
 to that platform's pinned `EXAMPLE_BASKETS` with a warning explaining why —
@@ -118,7 +118,9 @@ manual `basket_id` entry always stays available regardless.
   on mainnet (`mainnet:0xA0d69E286B938e21CBf7E51D71F6A4c8918f482F` —
   composition unavailable in this MVP, see above).
 - **QuantAMM/Balancer** — Safe Haven BTC:PAXG:USDC on mainnet
-  (`MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5`).
+  (`MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5`); Base Macro on base
+  (`BASE:0xb4161aea25bd6c5c8590ad50deb4ca752532f05d`); Sonic Macro on sonic
+  (`SONIC:0x74dc857d5567a3b087e79b96b91cdc8099b2fa34`).
 
 ## About each platform
 
@@ -162,7 +164,10 @@ manual `basket_id` entry always stays available regardless.
 ### QuantAMM / Balancer
 
 - QuantAMM pools are native Balancer v3 pools (type
-  `QUANT_AMM_WEIGHTED`) — no separate API of their own.
+  `QUANT_AMM_WEIGHTED`) — no separate API of their own, and no curated
+  discovery endpoint either; `discover_baskets()` excludes pools tagged
+  `BLACK_LISTED` (`EXCLUDED_POOL_TAG` in `adapters/quantamm.py`) instead of
+  hardcoding pool addresses.
 - Source: Balancer's public, no-key GraphQL API
   (`https://api-v3.balancer.fi/graphql`, confirmed by introspection).
   `poolTokens[].weight` gives the current weight; `weightSnapshots` gives a

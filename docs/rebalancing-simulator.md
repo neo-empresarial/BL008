@@ -192,7 +192,7 @@ Per-adapter discovery source and scope:
 |---|---|---|
 | `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
 | `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example. Allocation/history use `GET /dtf/rebalance` (Goldsky weights by nonce; discover `basket` fallback); performance uses DefiLlama then `GET /historical/dtf` |
-| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | Chains outside `CHAIN_TO_DEFILLAMA` are never queried |
+| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`, `tagNotIn: [EXCLUDED_POOL_TAG]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | **Excludes `BLACK_LISTED` pools** — QuantAMM has no curated discovery API, but Balancer itself tags test pools and duplicate deployments (e.g. a second Safe Haven) `BLACK_LISTED`; excluding that tag server-side currently leaves Safe Haven, Base Macro and Sonic Macro |
 
 The comparison multi-select in the sidebar calls `build_basket_options` for
 every platform (so switching the main platform picker doesn't limit what
