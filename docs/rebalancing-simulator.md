@@ -192,7 +192,7 @@ Per-adapter discovery source and scope:
 |---|---|---|
 | `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
 | `reserve.discover_baskets` | Goldsky `dtfs` query, paginated with `skip` per chain (mainnet/base/bsc) | **Index DTFs only** — this subgraph has no Yield DTF entities, so Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example |
-| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | Chains outside `CHAIN_TO_DEFILLAMA` are never queried |
+| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across `FEATURED_CHAINS` (mainnet, base, sonic) | **Featured BTFs only** — QuantAMM has no curated discovery API, so results are allowlisted to `FEATURED_BTF_POOLS` (Safe Haven, Base Macro, Sonic Macro); a new site-featured BTF requires adding its address there |
 
 The comparison multi-select in the sidebar calls `build_basket_options` for
 every platform (so switching the main platform picker doesn't limit what
