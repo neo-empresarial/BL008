@@ -589,10 +589,10 @@ theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
 
 # Per-basket TVL, when available, comes from the same discover_baskets()
 # rows the sidebar already fetched (cached) — QuantAMM has real per-pool
-# TVL there; Reserve's subgraph has no TVL field, so tvl_usd is always None
-# for it (see each adapter's discover_baskets docstring). Glider additionally
-# shows wallet count, which isn't part of the shared discovery shape and
-# needs its own (also cached) discover_strategies call.
+# TVL there, and Reserve has real per-basket market cap there too (see
+# each adapter's discover_baskets docstring). Glider additionally shows
+# wallet count, which isn't part of the shared discovery shape and needs
+# its own (also cached) discover_strategies call.
 basket_rows, basket_rows_error = safe_call(cached_discover_baskets, platform_name)
 basket_match = None
 if basket_rows:
