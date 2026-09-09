@@ -1,10 +1,25 @@
 """
-Shared visual language for the minimal dark UI: color constants, app-level
-CSS injection, and a Plotly layout applied to every chart.
+Shared visual language for the dark UI: color constants, app-level CSS
+injection, and a Plotly layout applied to every chart.
 
 Nothing here touches data or adapter logic — this module only styles what
 app.py already computes. See `.streamlit/config.toml` for the base
 Streamlit theme (backgrounds, primary color) this module builds on top of.
+
+Colors are ported from the reCLAMM frontend's Chakra theme
+(`reclamm-monorepo/packages/lib/shared/services/chakra/themes/`), which
+forces dark mode always — so these are that theme's `dark` token values,
+not a Streamlit-original palette:
+- BACKGROUND: `styles.global.body.background` → `background.base` →
+  `colors.base.dark` (`base/tokens.ts`).
+- SURFACE: `background.level2` (`base/tokens.ts`, dark) — one step lighter
+  than the page background, for card-like surfaces.
+- BORDER / GRID: `chartBorder.dark` (`base/colors.ts`).
+- TEXT / TEXT_MUTED: `text.primary` / `text.secondary` (dark).
+- ACCENT: `primary.500` (`base/colors.ts`).
+- NEUTRAL_HIGHLIGHT: `background.level4` — one step lighter than SURFACE.
+- COLORWAY: ACCENT plus the theme's green/orange/red/purple accents and the
+  scatter-chart "swap" blue (`semantic-tokens.ts`, `chart.pool.scatter`).
 """
 
 from __future__ import annotations
@@ -13,23 +28,23 @@ from typing import Any
 
 import streamlit as st
 
-BACKGROUND = "#111318"
-SURFACE = "#1a1d24"
-BORDER = "#2a2e37"
-TEXT = "#e4e6eb"
-TEXT_MUTED = "#9299a6"
-ACCENT = "#6ea8fe"
-GRID = "#242832"
+BACKGROUND = "#383E47"
+SURFACE = "#3F4650"
+BORDER = "#4F5764"
+TEXT = "#E5D3BE"
+TEXT_MUTED = "#A0AEC0"
+ACCENT = "#457dff"
+GRID = "#4F5764"
 
 # Grayscale-only stand-in for the theme's ACCENT, used where a blue accent
 # would be too loud — currently just the active weight-scenario tab (see
 # the tab-bar CSS below); everything else keeps using ACCENT.
-NEUTRAL_HIGHLIGHT = "#454b57"
+NEUTRAL_HIGHLIGHT = "#4C5561"
 
 # Applied to every series added to a chart, in order — restrained and
 # readable rather than a default rainbow, so a 2-3 series chart reads as
 # one system.
-COLORWAY = [ACCENT, "#f2b134", "#7ee08c", "#ff8fa3", "#c792ea", "#5fd4d4"]
+COLORWAY = [ACCENT, "#00d395", "#fdba74", "#f48975", "#b3aef5", "#6dadf9"]
 
 FONT_FAMILY = (
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
@@ -117,7 +132,7 @@ def inject_css() -> None:
             padding: 0.15rem 0.6rem;
             border-radius: 999px;
             background-color: {ACCENT};
-            color: {BACKGROUND};
+            color: #ffffff;
             font-size: 0.75rem;
             font-weight: 600;
         }}
