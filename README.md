@@ -55,7 +55,7 @@ Every basket select (main picker and the comparison multi-select) is
 populated from each platform's own discovery source, cached for an hour:
 
 - **Glider** — `discover_strategies` on the `"curated"` collection (requires `GLIDER_API_KEY`).
-- **Reserve** — Reserve's official discovery API (`GET /discover/dtfs`), filtered to active Index DTFs across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) are filtered out here, even though one is pinned as an example to show the composition-unavailable limitation.
+- **Reserve** — Reserve's official discovery API (`GET /discover/dtfs`), filtered to active Index DTFs across mainnet/base/bsc. **Index DTFs only** — Yield DTFs (e.g. eUSD) are filtered out here, even though one is pinned as an example to show the composition-unavailable limitation. Allocation/history/performance use the same API family (see Data sources below), not discovery alone.
 - **QuantAMM** — the Balancer GraphQL API, `poolTypeIn: [QUANT_AMM_WEIGHTED]`, across every chain in `CHAIN_TO_DEFILLAMA`.
 
 If discovery fails or returns nothing for a platform, the select falls back
@@ -64,14 +64,15 @@ manual `basket_id` entry always stays available regardless.
 
 ## What's missing (out of scope for this MVP)
 
-- Composition and history of Reserve's **Yield DTFs** (e.g. eUSD) — the
-  public subgraph only covers Index DTFs; Yield DTFs would require direct
+- Composition of Reserve's **Yield DTFs** (e.g. eUSD) — Index discovery /
+  rebalance routes do not expose them; Yield DTFs would require direct
   RPC reads of the contract (`BackingManager`), not implemented here. The
   adapter raises a clear error instead of simulating this data (see
+  `adapters/reserve.py`). Empty Index rebalance history is valid and
+  returns `[]` (not an error).
+- Direct link between a Reserve rebalance and the governance proposal
+  that approved it (no FK in the public surfaces used here — see TODO in
   `adapters/reserve.py`).
-- Direct link between a Reserve `Rebalance` and the governance proposal
-  that approved it (there's no FK between the two entities in the public
-  subgraph — see TODO in `adapters/reserve.py`).
 - Search/filter on the basket select — with dozens of discovered baskets
   on some platforms, the list is long and plain.
 - Any write operation (create strategy, enroll, withdraw, vote) — this app
@@ -136,26 +137,27 @@ manual `basket_id` entry always stays available regardless.
 
 ### Reserve Protocol
 
-- Doesn't have a ready-made B2B API like Glider's. This adapter combines
-  three public, no-key sources:
-  - `https://api.reserve.org/discover/dtfs` — Reserve's official discovery
-    API, the same catalog the Reserve site itself lists, used here for
-    `discover_baskets()` (filtered to active Index DTFs; gives `marketCap`
-    as per-basket TVL).
-  - Goldsky subgraphs (The Graph-compatible), one per chain
-    (mainnet/base/bsc), indexing the Folio contract of each Index DTF —
-    the `Rebalance` entity is the real rebalance log (endpoint and schema
-    confirmed in the `reserve-protocol/register` and
-    `reserve-protocol/dtf-index-subgraph` repos), still used for
-    `get_current_allocation`/`get_rebalance_history`.
-  - `https://api.llama.fi` (DefiLlama) — historical price per token
-    (`coins.llama.fi/chart`), used here as a performance proxy.
-- Weights come as a raw on-chain target quantity (`weightSpotLimit`), not a
-  ready-made % — we normalize by the sum to approximate relative weight by
-  quantity (not by USD value). See full caveats in `adapters/reserve.py`.
+- Public, no-key sources combined in `adapters/reserve.py`:
+  - `https://api.reserve.org/discover/dtfs` — active Index DTF catalog for
+    `discover_baskets()` (`marketCap` → per-basket TVL) and basket-weight
+    fallback (`basket[].weight`, 0–100) when a DTF has no rebalance events.
+  - `https://api.reserve.org/dtf/rebalance` — canonical rebalance event
+    list (same path as the official CLI / SDK `fetchRebalanceHistory`);
+    optional `&nonce=N` detail supplies USD-approximate weights when
+    Goldsky has no `weightSpotLimit` for that nonce.
+  - `https://api.reserve.org/historical/dtf` — NAV-style price series used
+    as performance fallback when DefiLlama has no chart.
+  - Goldsky Index DTF subgraphs (mainnet/base/bsc) — best-effort
+    `weightSpotLimit` by nonce, and a fallback event list if the Reserve
+    API returns nothing.
+  - DefiLlama (`coins.llama.fi/chart`) — primary performance proxy.
+- Rebalance-derived weights from Goldsky are quantity-normalized
+  (`weightSpotLimit`); detail-API weights are USD-approximate
+  (units × prices). Discover fallback weights are already 0–100. See
+  caveats in `adapters/reserve.py`.
 - Rebalancing is via Dutch auction, approved beforehand by governance —
-  but there's no direct link (FK) between `Rebalance` and the proposal that
-  approved it in the public schema.
+  but there's no direct link between a rebalance and the proposal that
+  approved it in the public surfaces used here.
 
 ### QuantAMM / Balancer
 
@@ -180,7 +182,7 @@ BL008/
   adapters/
     __init__.py
     glider.py              # Glider API (implemented)
-    reserve.py             # Reserve discovery API + Goldsky subgraph + DefiLlama (implemented)
+    reserve.py             # Reserve API (discover/rebalance/historical) + Goldsky + DefiLlama
     quantamm.py             # Balancer GraphQL API (implemented)
     pricing.py             # historical price per asset (DefiLlama), used by the weight simulator
   ui/
