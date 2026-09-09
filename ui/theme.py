@@ -14,16 +14,29 @@ not a Streamlit-original palette:
   `colors.base.dark` (`base/tokens.ts`).
 - SURFACE: `background.level2` (`base/tokens.ts`, dark) — one step lighter
   than the page background, for card-like surfaces.
+- FOOTER_BG: `background.level0` — one step darker than BACKGROUND, same
+  relationship reclamm's own `Footer` (`background.level0`) has to its
+  page body (`background.base`).
 - BORDER / GRID: `chartBorder.dark` (`base/colors.ts`).
 - TEXT / TEXT_MUTED: `text.primary` / `text.secondary` (dark).
 - ACCENT: `primary.500` (`base/colors.ts`).
 - NEUTRAL_HIGHLIGHT: `background.level4` — one step lighter than SURFACE.
 - COLORWAY: ACCENT plus the theme's green/orange/red/purple accents and the
   scatter-chart "swap" blue (`semantic-tokens.ts`, `chart.pool.scatter`).
+
+`public/background-noise.png` is reclamm's own grain texture asset
+(`reclamm-monorepo/apps/reclamm-frontend/public/images/background-noise.png`),
+used here the same way reclamm's `Noise` component uses it: tiled full-page,
+under a near-opaque layer of the page background color — see
+`_NOISE_BACKGROUND_CSS` below. `public/granite-1.jpg` and
+`public/favicon-light.png` are staged from the same source for follow-up
+work (per-chart granite backgrounds, page favicon) and unused so far.
 """
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -35,6 +48,7 @@ TEXT = "#E5D3BE"
 TEXT_MUTED = "#A0AEC0"
 ACCENT = "#457dff"
 GRID = "#4F5764"
+FOOTER_BG = "#31373F"
 
 # Grayscale-only stand-in for the theme's ACCENT, used where a blue accent
 # would be too loud — currently just the active weight-scenario tab (see
@@ -52,6 +66,33 @@ FONT_FAMILY = (
 MONO_FONT_FAMILY = "SFMono-Regular, Menlo, Consolas, monospace"
 
 DEFAULT_CHART_HEIGHT = 420
+
+_PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+
+
+def _noise_background_css() -> str:
+    """Two-layer `background-image` for `.stApp`, replicating reclamm's
+    `Noise` component: the grain PNG tiled full-page, with a near-opaque
+    (97%) layer of the page background painted over it — CSS paints the
+    first-listed background on top, so a flat 97%-opaque color sits above
+    the tiled texture in one rule, no extra wrapper element needed. Returns
+    "" (texture skipped, solid BACKGROUND still applies via
+    `.streamlit/config.toml`) if the asset is missing.
+    """
+    noise_path = _PUBLIC_DIR / "background-noise.png"
+    if not noise_path.is_file():
+        return ""
+    b64 = base64.b64encode(noise_path.read_bytes()).decode("ascii")
+    r, g, b = (int(BACKGROUND[i : i + 2], 16) for i in (1, 3, 5))
+    return f"""
+        .stApp {{
+            background-image:
+                linear-gradient(rgba({r},{g},{b},0.97), rgba({r},{g},{b},0.97)),
+                url("data:image/png;base64,{b64}");
+            background-repeat: no-repeat, repeat;
+        }}
+        """
+
 
 PLOTLY_LAYOUT: dict[str, Any] = {
     "paper_bgcolor": SURFACE,
@@ -81,15 +122,17 @@ def inject_css() -> None:
     """Injects app-level CSS: readable sans-serif typography, extra top
     padding so the header isn't clipped under Streamlit's toolbar, rounded
     card-like chart/table surfaces (with `overflow: hidden` so the rounded
-    corners actually clip the chart's own background), and address/link
-    styling — on top of the base theme from `.streamlit/config.toml`. Call
-    once, right after `st.set_page_config`."""
+    corners actually clip the chart's own background), address/link
+    styling, the page-wide grain texture (see `_noise_background_css`), and
+    the footer (see `render_footer`) — on top of the base theme from
+    `.streamlit/config.toml`. Call once, right after `st.set_page_config`."""
     st.markdown(
         f"""
         <style>
         html, body, [class*="css"] {{
             font-family: {FONT_FAMILY};
         }}
+        {_noise_background_css()}
         .block-container {{
             padding-top: 3rem;
             padding-bottom: 2rem;
@@ -206,7 +249,148 @@ def inject_css() -> None:
             margin-bottom: 0.75rem;
             gap: 0.15rem !important;
         }}
+
+        /* Footer (render_footer) — reclamm-style link columns on a
+        level0-dark card, sitting below the app content. */
+        .app-footer {{
+            margin: 3rem -1rem 0;
+            padding: 2rem 1rem 1.5rem;
+            background-color: {FOOTER_BG};
+            border-top: 1px solid {BORDER};
+        }}
+        .footer-top {{
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .footer-intro {{
+            max-width: 26rem;
+        }}
+        .footer-title {{
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: {TEXT};
+            margin-bottom: 0.4rem;
+        }}
+        .footer-subtitle {{
+            font-size: 0.85rem;
+            color: {TEXT_MUTED};
+        }}
+        .footer-cols {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2.5rem;
+        }}
+        .footer-col-title {{
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: {TEXT_MUTED};
+            margin-bottom: 0.6rem;
+        }}
+        .footer-links {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.45rem;
+        }}
+        .footer-link {{
+            font-size: 0.85rem;
+            color: {TEXT};
+            text-decoration: none;
+        }}
+        .footer-link:hover {{
+            color: {ACCENT};
+        }}
+        .footer-divider {{
+            max-width: 1200px;
+            margin: 1.5rem auto 1rem;
+            border-top: 1px solid {BORDER};
+        }}
+        .footer-bottom {{
+            max-width: 1200px;
+            margin: 0 auto;
+            font-size: 0.78rem;
+            color: {TEXT_MUTED};
+        }}
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# label -> href, grouped under a section title — mirrors the shape of
+# reclamm's own `PROJECT_CONFIG.footer.linkSections` (see
+# `reclamm-monorepo/packages/lib/config/getProjectConfig.ts`), adapted to
+# this project: no social/legal links here, since this app has neither.
+FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
+    {
+        "title": "DTFs On-Chain",
+        "links": [
+            {"label": "GitHub", "href": "https://github.com/neo-empresarial/BL008"},
+            {
+                "label": "Docs",
+                "href": "https://github.com/neo-empresarial/BL008/blob/main/docs/rebalancing-simulator.md",
+            },
+        ],
+    },
+    {
+        "title": "Platforms",
+        "links": [
+            {"label": "Glider", "href": "https://glider.fi"},
+            {"label": "Reserve Protocol", "href": "https://reserve.org"},
+            {"label": "QuantAMM / Balancer", "href": "https://balancer.fi"},
+        ],
+    },
+    {
+        "title": "Data sources",
+        "links": [{"label": "DefiLlama", "href": "https://defillama.com"}],
+    },
+]
+
+
+def render_footer() -> None:
+    """Reclamm-style footer: project name/subtitle, link columns
+    (`FOOTER_LINK_SECTIONS`), and a bottom disclaimer line. Call once, at
+    the very end of the page."""
+    columns_html = "".join(
+        f"""
+        <div>
+            <div class="footer-col-title">{section['title']}</div>
+            <div class="footer-links">
+                {"".join(
+                    f'<a class="footer-link" href="{link["href"]}" '
+                    'target="_blank" rel="noopener noreferrer">'
+                    f'{link["label"]}</a>'
+                    for link in section["links"]
+                )}
+            </div>
+        </div>
+        """
+        for section in FOOTER_LINK_SECTIONS
+    )
+    st.markdown(
+        f"""
+        <div class="app-footer">
+            <div class="footer-top">
+                <div class="footer-intro">
+                    <div class="footer-title">DTFs On-Chain</div>
+                    <div class="footer-subtitle">
+                        Compares real on-chain basket rebalancing across
+                        Glider, Reserve Protocol, and QuantAMM/Balancer.
+                    </div>
+                </div>
+                <div class="footer-cols">{columns_html}</div>
+            </div>
+            <div class="footer-divider"></div>
+            <div class="footer-bottom">
+                Read-only comparison tool — not affiliated with Glider,
+                Reserve, or Balancer.
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )

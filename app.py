@@ -864,3 +864,5 @@ with st.expander("Protocol details"):
             st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
         else:
             st.write("No history available to estimate.")
+
+theme.render_footer()
