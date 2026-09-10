@@ -1,4 +1,4 @@
-# BL008 — Rebalancing Simulator
+# BL008 — DTFs On-Chain Monitoring
 
 Streamlit app that compares real on-chain rebalancing behavior across three
 basket platforms — Glider, Reserve Protocol and QuantAMM/Balancer — side by
