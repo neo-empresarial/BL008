@@ -255,6 +255,57 @@ def to_display_series(df: pd.DataFrame, chart_mode: str) -> pd.DataFrame:
     return df
 
 
+MIN_POINTS_FOR_VOLATILITY = 3  # need >= 2 period-over-period returns
+
+
+def compute_series_metrics(df: pd.DataFrame) -> dict[str, float | None]:
+    """Total return, annualized volatility, and max drawdown for one
+    performance series — computed purely from its own `date`/`percent_change`
+    points, same principle as the comparison overlay's "no cross-series
+    date alignment" (see docs/rebalancing-simulator.md). Any metric that
+    needs more history than the series actually has comes back `None`
+    (rendered as "—"), never estimated from fewer points than it needs.
+
+    - **Total return**: the series' own last `percent_change` value — the
+      same number the chart already plots, just read off the end.
+    - **Max drawdown**: worst peak-to-trough drop in the cumulative growth
+      implied by `percent_change` (`1 + percent_change / 100`).
+    - **Volatility**: std. dev. of period-over-period returns on that same
+      growth curve, annualized using *this series' own* observed average
+      spacing between points (`365.25 / avg_days_between`) rather than
+      assuming daily data — sources aren't guaranteed to share a cadence
+      (see `get_performance`'s adapter-native `points`), so this is an
+      approximation, not a precise figure. `None` below
+      `MIN_POINTS_FOR_VOLATILITY` points.
+    """
+    valid = df.dropna(subset=["percent_change"]).copy()
+    if valid.empty:
+        return {"total_return_pct": None, "volatility_pct": None, "max_drawdown_pct": None}
+
+    valid["date"] = pd.to_datetime(valid["date"])
+    valid = valid.sort_values("date").drop_duplicates(subset="date")
+
+    total_return_pct = float(valid["percent_change"].iloc[-1])
+
+    growth = 1.0 + valid["percent_change"] / 100.0
+    max_drawdown_pct = float((growth / growth.cummax() - 1.0).min() * 100.0)
+
+    volatility_pct = None
+    if len(valid) >= MIN_POINTS_FOR_VOLATILITY:
+        span_days = (valid["date"].iloc[-1] - valid["date"].iloc[0]).days
+        avg_days_between = span_days / (len(valid) - 1) if span_days > 0 else 0
+        if avg_days_between > 0:
+            periods_per_year = 365.25 / avg_days_between
+            period_returns = growth.pct_change().dropna()
+            volatility_pct = float(period_returns.std() * (periods_per_year**0.5) * 100.0)
+
+    return {
+        "total_return_pct": total_return_pct,
+        "volatility_pct": volatility_pct,
+        "max_drawdown_pct": max_drawdown_pct,
+    }
+
+
 def _label_markup(row: dict) -> str:
     """Human-readable label first; token address/explorer link as
     secondary metadata, per row's `display_asset`/`explorer_url`
@@ -785,6 +836,45 @@ if perf_frames:
         labels={"date": "Date", "display_value": y_label},
     )
     st.plotly_chart(theme.apply_chart_theme(fig_perf), width="stretch")
+
+    st.markdown("**Performance summary**")
+    metrics_rows = []
+    for series_name, group in df_perf_all.groupby("series", sort=False):
+        m = compute_series_metrics(group)
+        metrics_rows.append(
+            {
+                "Series": series_name,
+                "Total return": f"{m['total_return_pct']:+.1f}%" if m["total_return_pct"] is not None else "—",
+                "Volatility (ann.)": f"{m['volatility_pct']:.1f}%" if m["volatility_pct"] is not None else "—",
+                "Max drawdown": f"{m['max_drawdown_pct']:.1f}%" if m["max_drawdown_pct"] is not None else "—",
+            }
+        )
+    st.dataframe(
+        pd.DataFrame(metrics_rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Series": st.column_config.TextColumn(
+                help="Which performance line this row summarizes — see the chart and 'How to read this chart' above.",
+            ),
+            "Total return": st.column_config.TextColumn(
+                help="Cumulative % change over the whole window — the same number the chart plots, read off its last point.",
+            ),
+            "Volatility (ann.)": st.column_config.TextColumn(
+                help="Annualized std. dev. of period-over-period returns, using this series' own observed spacing between data points — an approximation, not a precise figure.",
+            ),
+            "Max drawdown": st.column_config.TextColumn(
+                help="Worst peak-to-trough drop in cumulative return over the window.",
+            ),
+        },
+    )
+    st.caption(
+        "Hover a column header for what it measures. Every metric is "
+        "computed independently per series, from that series' own points "
+        "only — sources aren't guaranteed to share a cadence, so treat "
+        "Volatility as an approximation, not a precise figure. \"—\" means "
+        "that series doesn't have enough points to compute that metric."
+    )
 
 # --- strategy comparison overlay --------------------------------------------
 
