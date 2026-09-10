@@ -75,10 +75,14 @@ has a browser-style tab strip for its weight scenarios (see below).
 app-level CSS — extra top padding so the header isn't clipped under
 Streamlit's toolbar, rounded card-like chart/table surfaces with
 `overflow: hidden` so the rounding actually clips the chart's own
-background, address/link styling, a page-wide grain texture, the footer —
-and a shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
-420px) applied to every chart via `theme.apply_chart_theme`. Neither file
-touches data or adapter logic.
+background, form inputs painted one step darker than `SURFACE` (so they
+stay visible inside `stForm`, whose fill matches Streamlit's
+`secondaryBackgroundColor`), form submit styled like the active weight-
+scenario tab (`NEUTRAL_HIGHLIGHT` fill + `TEXT`, not blue `ACCENT`),
+address/link styling, a page-wide grain texture, the footer — and a
+shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
+420px) applied to every chart via `theme.apply_chart_theme`. Neither
+file touches data or adapter logic.
 
 The palette (both files) is ported from the `reclamm-monorepo` frontend's
 Chakra theme — see the constants' docstring in `ui/theme.py` for the exact
