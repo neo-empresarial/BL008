@@ -168,6 +168,32 @@ def inject_css() -> None:
         [data-testid="stForm"] {{
             padding: 1.5rem;
         }}
+        /* Form fields share Streamlit's secondaryBackgroundColor with
+        SURFACE, so without an override they vanish into the form card.
+        Streamlit >=1.39 paints border/fill on stTextInputRootElement (the
+        flex wrapper that also holds the password eye); the inner field is
+        intentionally transparent — style the root, not the <input>, or the
+        eye sits outside the visible box. Submit matches the active
+        weight-scenario tab (NEUTRAL_HIGHLIGHT + TEXT), not blue ACCENT. */
+        [data-testid="stForm"] [data-testid="stTextInputRootElement"] {{
+            background-color: {FOOTER_BG} !important;
+            border: 1px solid {BORDER} !important;
+        }}
+        [data-testid="stForm"] [data-testid="stTextInputRootElement"]:focus-within {{
+            border-color: {ACCENT} !important;
+            box-shadow: 0 0 0 1px {ACCENT} !important;
+        }}
+        [data-testid="stForm"] [data-testid="stTextInputField"] {{
+            color: {TEXT} !important;
+        }}
+        [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {{
+            background-color: {NEUTRAL_HIGHLIGHT} !important;
+            border-color: {NEUTRAL_HIGHLIGHT} !important;
+            color: {TEXT} !important;
+        }}
+        [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {{
+            border-color: {TEXT_MUTED} !important;
+        }}
         .console-header {{
             display: flex;
             align-items: baseline;
