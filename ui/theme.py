@@ -36,10 +36,12 @@ work (per-chart granite backgrounds, page favicon) and unused so far.
 from __future__ import annotations
 
 import base64
+import io
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
+from PIL import Image
 
 BACKGROUND = "#383E47"
 SURFACE = "#3F4650"
@@ -98,6 +100,17 @@ def _noise_background_css() -> str:
         """
 
 
+def page_icon() -> str | None:
+    """Path to `public/favicon-light.png` (the reclamm-ported Balancer
+    stacked-stones mark, staged unused until now) for `st.set_page_config`'s
+    `page_icon` — `None` (Streamlit's own default favicon) if the file
+    isn't there. Call is only meaningful when passed straight into
+    `st.set_page_config`, which must run before any other Streamlit
+    command."""
+    path = _PUBLIC_DIR / "favicon-light.png"
+    return str(path) if path.is_file() else None
+
+
 PLOTLY_LAYOUT: dict[str, Any] = {
     "paper_bgcolor": SURFACE,
     "plot_bgcolor": SURFACE,
@@ -145,12 +158,15 @@ def inject_css() -> None:
         [data-testid="stSidebar"] {{
             border-right: 1px solid {BORDER};
         }}
-        [data-testid="stPlotlyChart"], [data-testid="stDataFrame"] {{
+        [data-testid="stPlotlyChart"], [data-testid="stDataFrame"], [data-testid="stForm"] {{
             border: 1px solid {BORDER};
             border-radius: 12px;
             padding: 0.5rem;
             background-color: {SURFACE};
             overflow: hidden;
+        }}
+        [data-testid="stForm"] {{
+            padding: 1.5rem;
         }}
         .console-header {{
             display: flex;
@@ -356,6 +372,68 @@ FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
 ]
 
 
+def _logo_img_tag(path: Path, height_px: int) -> str:
+    """One base64-embedded <img> tag for a logo file, cropped to its
+    visible (non-transparent) content and fixed to `height_px` with
+    `width: auto`.
+
+    Two problems, two fixes, both needed — matching just one still left
+    the logos looking mismatched:
+    - `st.image`'s `width="stretch"` matches *column* width, not height —
+      with two logos of very different aspect ratios (NEO's is roughly
+      square, Balancer's is a wide wordmark), matching width alone made
+      NEO render much taller. Fixing *height* instead (`width: auto`)
+      solves that part.
+    - But fixing height on the *raw* files still left Balancer's logo
+      looking tiny next to NEO's: NEO's artwork fills ~99% of its own
+      canvas, while Balancer's actual glyph is a small block padded by a
+      wide transparent margin (~17% of the canvas height, empirically) —
+      scaling the whole padded canvas to the same height scales the
+      padding right along with it. Cropping to `Image.getbbox()` (the
+      bounding box of non-transparent pixels) before embedding removes
+      that padding, so `height_px` sizes the actual visible mark on both
+      logos, not however much blank canvas happens to surround it.
+    """
+    with Image.open(path) as im:
+        im = im.convert("RGBA")
+        bbox = im.getbbox()
+        cropped = im.crop(bbox) if bbox else im
+        buf = io.BytesIO()
+        cropped.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return (
+        f'<img src="data:image/png;base64,{b64}" alt="{path.stem}" '
+        f'style="height:{height_px}px;width:auto;object-fit:contain;" />'
+    )
+
+
+def _logos_html(height_px: int, justify: str, margin_bottom_rem: float) -> str:
+    """Row of whichever logo files exist among `neo-logo.png` /
+    `balancer-logo.png` (`_PUBLIC_DIR`), each embedded at the same fixed
+    height via `_logo_img_tag`. Returns "" (nothing rendered) if neither
+    file is present yet — same "never crash on a missing optional asset"
+    convention as `_noise_background_css`; a repo with only one of the two
+    logos still shows that one, not a broken-image icon."""
+    paths = [_PUBLIC_DIR / "neo-logo.png", _PUBLIC_DIR / "balancer-logo.png"]
+    present = [p for p in paths if p.is_file()]
+    if not present:
+        return ""
+    imgs = "".join(_logo_img_tag(p, height_px) for p in present)
+    return (
+        f'<div style="display:flex;align-items:center;justify-content:{justify};'
+        f'gap:1.25rem;margin-bottom:{margin_bottom_rem}rem;">{imgs}</div>'
+    )
+
+
+def render_login_logos() -> None:
+    """NEO and Balancer logos, centered above the login form (see app.py's
+    `require_login`) — see `_logos_html` for the sizing rationale and the
+    missing-file fallback."""
+    html = _logos_html(height_px=64, justify="center", margin_bottom_rem=1.25)
+    if html:
+        st.markdown(html, unsafe_allow_html=True)
+
+
 def render_footer() -> None:
     """Reclamm-style footer: project name/subtitle, link columns
     (`FOOTER_LINK_SECTIONS`), and a bottom disclaimer line. Call once, at
@@ -401,9 +479,13 @@ def render_footer() -> None:
 
 
 def render_header(title: str, platform_name: str, basket_id: str) -> None:
-    """Compact header: product name, platform badge, basket id."""
+    """NEO/Balancer logos (small, left-aligned — see `_logos_html`; skipped
+    if neither file is present) above the compact header: product name,
+    platform badge, basket id."""
+    logos_html = _logos_html(height_px=28, justify="flex-start", margin_bottom_rem=0.5)
     st.markdown(
         f"""
+        {logos_html}
         <div class="console-header">
             <div class="console-title">{title}</div>
             <div class="console-meta">
