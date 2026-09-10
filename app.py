@@ -18,9 +18,12 @@ recombining each asset's historical price (via `price_ref`, which each
 adapter exposes when it can map the asset to a chain:address pair
 recognized by DefiLlama) using the new weights. An asset with no available
 historical price is excluded from the simulation and listed as such, never
-invented. The performance chart (and the comparison overlay) can show
-an indexed value (base 100), percent return, or growth of a $10,000 stake,
-via a shared toggle.
+invented. Multiple independent weight scenarios ("tabs") can be opened for
+the same basket — each keeps its own slider state, so different what-if
+allocations can be tweaked side by side and are overlaid together on the
+same performance chart to compare them. The performance chart (and the
+comparison overlay) can show an indexed value (base 100), percent return,
+or growth of a $10,000 stake, via a shared toggle.
 
 Caveat (repeated from the adapter): the underlying assets differ across the
 three platforms (tokenized stocks vs. crypto vs. crypto pools), and the
@@ -34,7 +37,10 @@ visible note that methodologies differ.
 
 from __future__ import annotations
 
+import hmac
+import os
 from datetime import datetime
+from uuid import uuid4
 
 import pandas as pd
 import plotly.express as px
@@ -54,7 +60,14 @@ SIMULATION_DAYS = 180
 # the "How to read this chart" expander below and docs/rebalancing-simulator.md).
 SERIES_REAL = "Real strategy (with rebalancing)"
 SERIES_HODL = "HODL (real weights, no rebalancing)"
-SERIES_ADJUSTED = "Adjusted buy-and-hold (your weights)"
+
+
+def adjusted_series_label(scenario_label: str) -> str:
+    """Series name for one weight-scenario tab's simulated curve — each tab
+    gets its own line on the shared performance chart (see
+    `render_scenario_editor`), named after that tab so several what-if
+    allocations can be told apart when compared."""
+    return f"Adjusted buy-and-hold ({scenario_label})"
 
 PLATFORMS = {
     "Glider": glider,
@@ -244,6 +257,338 @@ def to_display_series(df: pd.DataFrame, chart_mode: str) -> pd.DataFrame:
     return df
 
 
+MIN_POINTS_FOR_VOLATILITY = 3  # need >= 2 period-over-period returns
+
+
+def compute_series_metrics(df: pd.DataFrame) -> dict[str, float | None]:
+    """Total return, annualized volatility, and max drawdown for one
+    performance series — computed purely from its own `date`/`percent_change`
+    points, same principle as the comparison overlay's "no cross-series
+    date alignment" (see docs/rebalancing-simulator.md). Any metric that
+    needs more history than the series actually has comes back `None`
+    (rendered as "—"), never estimated from fewer points than it needs.
+
+    - **Total return**: the series' own last `percent_change` value — the
+      same number the chart already plots, just read off the end.
+    - **Max drawdown**: worst peak-to-trough drop in the cumulative growth
+      implied by `percent_change` (`1 + percent_change / 100`).
+    - **Volatility**: std. dev. of period-over-period returns on that same
+      growth curve, annualized using *this series' own* observed average
+      spacing between points (`365.25 / avg_days_between`) rather than
+      assuming daily data — sources aren't guaranteed to share a cadence
+      (see `get_performance`'s adapter-native `points`), so this is an
+      approximation, not a precise figure. `None` below
+      `MIN_POINTS_FOR_VOLATILITY` points.
+    """
+    valid = df.dropna(subset=["percent_change"]).copy()
+    if valid.empty:
+        return {"total_return_pct": None, "volatility_pct": None, "max_drawdown_pct": None}
+
+    valid["date"] = pd.to_datetime(valid["date"])
+    valid = valid.sort_values("date").drop_duplicates(subset="date")
+
+    total_return_pct = float(valid["percent_change"].iloc[-1])
+
+    growth = 1.0 + valid["percent_change"] / 100.0
+    max_drawdown_pct = float((growth / growth.cummax() - 1.0).min() * 100.0)
+
+    volatility_pct = None
+    if len(valid) >= MIN_POINTS_FOR_VOLATILITY:
+        span_days = (valid["date"].iloc[-1] - valid["date"].iloc[0]).days
+        avg_days_between = span_days / (len(valid) - 1) if span_days > 0 else 0
+        if avg_days_between > 0:
+            periods_per_year = 365.25 / avg_days_between
+            period_returns = growth.pct_change().dropna()
+            volatility_pct = float(period_returns.std() * (periods_per_year**0.5) * 100.0)
+
+    return {
+        "total_return_pct": total_return_pct,
+        "volatility_pct": volatility_pct,
+        "max_drawdown_pct": max_drawdown_pct,
+    }
+
+
+def _label_markup(row: dict) -> str:
+    """Human-readable label first; token address/explorer link as
+    secondary metadata, per row's `display_asset`/`explorer_url`
+    (see adapters/pricing.py)."""
+    label = row.get("display_asset") or row["asset"]
+    markup = f"**{label}**"
+    if row.get("explorer_url"):
+        markup += f" [↗]({row['explorer_url']})"
+    return markup
+
+
+def _scenarios_key(platform_name: str, basket_id: str) -> str:
+    return f"scenarios::{platform_name}::{basket_id}"
+
+
+def get_scenarios(platform_name: str, basket_id: str) -> list[dict]:
+    """This basket's list of weight-scenario tabs, creating a single default
+    one the first time a basket is opened. Each scenario is
+    `{"id", "label"}`; slider/committed-weight state is keyed by scenario id
+    (see `render_scenario_editor`), so tabs never share slider state and
+    switching platform/basket starts fresh rather than reusing another
+    basket's tabs."""
+    key = _scenarios_key(platform_name, basket_id)
+    if key not in st.session_state:
+        st.session_state[key] = [{"id": "s1", "label": "Scenario 1"}]
+    return st.session_state[key]
+
+
+def _active_scenario_key(platform_name: str, basket_id: str) -> str:
+    return f"active_scenario::{platform_name}::{basket_id}"
+
+
+def _renaming_key(platform_name: str, basket_id: str) -> str:
+    return f"renaming_scenario::{platform_name}::{basket_id}"
+
+
+def _commit_rename(scenario: dict, widget_key: str, renaming_key: str) -> None:
+    """`on_change` callback for a tab's rename box (see `render_tab_bar`):
+    Streamlit runs this the moment the text_input's value changes (Enter or
+    losing focus) — i.e. the instant the user commits — and reruns the
+    script right after, so no separate confirm button is needed. Ignores a
+    blanked-out value rather than leaving a tab unnamed."""
+    new_label = st.session_state.get(widget_key, "").strip()
+    if new_label:
+        scenario["label"] = new_label
+    st.session_state[renaming_key] = False
+
+
+def render_tab_bar(platform_name: str, basket_id: str, scenarios: list[dict]) -> str:
+    """Browser-style tab strip for this basket's weight scenarios — one row
+    of compact buttons built from `st.columns` (`st.tabs` can't host a "+"
+    or a per-tab close/rename control, so the whole strip is hand-rolled;
+    see `ui/theme.py` for the CSS that makes it read as tabs rather than a
+    row of plain buttons). Only the *active* scenario's editor is rendered
+    below the strip — like a browser, every other tab's content stays
+    hidden (but its weights are preserved in session state either way, see
+    `render_scenario_editor`). Mutates `scenarios` in place (add/remove) and
+    returns the id of whichever scenario ends up active after this run's
+    clicks are applied.
+
+    Per scenario: a select button (its own label; `type="primary"` when
+    active, giving it Streamlit's accent color as the "active tab" look)
+    plus a small "✕". Streamlit has no double-click event to hook a rename
+    onto, so the nearest native equivalent stands in: clicking a tab that's
+    already active swaps its select button for an inline `text_input`
+    (pre-filled with the current label) instead of switching/doing nothing
+    — i.e. "click the tab you're on to rename it". A trailing "＋" adds a
+    new scenario and switches to it immediately.
+    """
+    active_key = _active_scenario_key(platform_name, basket_id)
+    renaming_key = _renaming_key(platform_name, basket_id)
+
+    valid_ids = {s["id"] for s in scenarios}
+    if st.session_state.get(active_key) not in valid_ids:
+        st.session_state[active_key] = scenarios[0]["id"]
+    active_id = st.session_state[active_key]
+    renaming = st.session_state.get(renaming_key, False)
+
+    widths: list[int] = []
+    specs: list[tuple[str, dict | None]] = []
+    for scenario in scenarios:
+        is_active = scenario["id"] == active_id
+        specs.append(("rename_input" if is_active and renaming else "select", scenario))
+        widths.append(4 if is_active else 3)
+        specs.append(("close", scenario))
+        widths.append(1)
+    specs.append(("add", None))
+    widths.append(1)
+
+    new_active_id = active_id
+    removed_id = None
+    # The column layout above was sized from `scenarios`/`active_id` as they
+    # were at the top of this run — a click that changes either (switching
+    # tabs, adding/closing one, entering rename mode) needs an immediate
+    # `st.rerun()` so the strip reflects it now rather than one interaction
+    # later (mutating session_state alone doesn't trigger a second rerun on
+    # its own). A rename commit doesn't need this: its `on_change` callback
+    # already runs — and updates session_state — before this function is
+    # even called on the rerun it triggers.
+    layout_changed = False
+
+    cols = st.columns(widths, gap="small")
+    for col, (kind, scenario) in zip(cols, specs):
+        with col:
+            if kind == "select":
+                is_active = scenario["id"] == active_id
+                clicked = st.button(
+                    scenario["label"],
+                    key=f"tabsel::{platform_name}::{basket_id}::{scenario['id']}",
+                    type="primary" if is_active else "secondary",
+                    width="stretch",
+                )
+                if clicked:
+                    if is_active:
+                        st.session_state[renaming_key] = True
+                    else:
+                        new_active_id = scenario["id"]
+                        st.session_state[renaming_key] = False
+                    layout_changed = True
+            elif kind == "close":
+                can_remove = len(scenarios) > 1
+                if st.button(
+                    "✕",
+                    key=f"tabclose::{platform_name}::{basket_id}::{scenario['id']}",
+                    type="tertiary",
+                    disabled=not can_remove,
+                    help="Close this tab" if can_remove else "At least one tab must remain",
+                ):
+                    removed_id = scenario["id"]
+                    layout_changed = True
+            elif kind == "rename_input":
+                widget_key = f"tabname::{platform_name}::{basket_id}::{scenario['id']}"
+                st.text_input(
+                    "Tab name",
+                    value=scenario["label"],
+                    key=widget_key,
+                    label_visibility="collapsed",
+                    on_change=_commit_rename,
+                    args=(scenario, widget_key, renaming_key),
+                )
+            elif kind == "add":
+                if st.button(
+                    "＋",
+                    key=f"tabadd::{platform_name}::{basket_id}",
+                    type="tertiary",
+                    help="Add a new weight tab",
+                ):
+                    new_id = uuid4().hex[:8]
+                    scenarios.append({"id": new_id, "label": f"Scenario {len(scenarios) + 1}"})
+                    new_active_id = new_id
+                    st.session_state[renaming_key] = False
+                    layout_changed = True
+
+    if removed_id is not None:
+        scenarios[:] = [s for s in scenarios if s["id"] != removed_id]
+        if removed_id == new_active_id:
+            new_active_id = scenarios[0]["id"]
+        st.session_state[renaming_key] = False
+
+    st.session_state[active_key] = new_active_id
+
+    if layout_changed:
+        st.rerun()
+
+    return new_active_id
+
+
+def render_scenario_editor(
+    scenario: dict,
+    allocation: list[dict],
+    real_weights: dict[str, float],
+    price_refs: dict[str, str | None],
+    display_labels: dict[str, str],
+    platform_name: str,
+    basket_id: str,
+) -> dict[str, float]:
+    """Renders one weight-scenario tab: reset button, sliders (dragging one
+    proportionally rescales the others to keep the total at 100%, same rule
+    for every tab) and the resulting donut chart + table. Returns the
+    committed weights for this tab.
+
+    Slider/history state is keyed by `scenario["id"]` (in addition to
+    platform/basket), so each tab keeps its own weights fully independent of
+    every other tab open on this same basket.
+    """
+    scenario_id = scenario["id"]
+
+    def _slider_key(asset: str) -> str:
+        return f"w::{platform_name}::{basket_id}::{scenario_id}::{asset}"
+
+    history_key = f"prev_w::{platform_name}::{basket_id}::{scenario_id}"
+    reset_clicked = st.button(
+        "Reset to real weights", key=f"reset::{platform_name}::{basket_id}::{scenario_id}"
+    )
+
+    if reset_clicked or history_key not in st.session_state:
+        committed = dict(real_weights)
+    else:
+        prev_committed = st.session_state[history_key]
+        pending = {
+            asset: st.session_state.get(_slider_key(asset), prev_committed.get(asset, real))
+            for asset, real in real_weights.items()
+        }
+        changed = [
+            asset
+            for asset, value in pending.items()
+            if abs(value - prev_committed.get(asset, value)) > 1e-9
+        ]
+        if len(changed) == 1:
+            # Proportional rebalance: the dragged asset keeps its new
+            # value; every other asset is scaled to fill the remaining
+            # percentage, preserving their relative proportions — so the
+            # sum always stays at 100% without a separate normalization
+            # step (see docs/rebalancing-simulator.md).
+            changed_asset = changed[0]
+            new_value = max(0.0, min(100.0, pending[changed_asset]))
+            others = [a for a in pending if a != changed_asset]
+            remaining = 100.0 - new_value
+            prev_others_total = sum(prev_committed.get(a, 0.0) for a in others)
+            committed = {changed_asset: new_value}
+            if prev_others_total > 0:
+                for a in others:
+                    committed[a] = prev_committed.get(a, 0.0) / prev_others_total * remaining
+            elif others:
+                equal_share = remaining / len(others)
+                for a in others:
+                    committed[a] = equal_share
+        else:
+            # 0 or 2+ diffs: this tab was just created, or nothing changed
+            # yet — use pending as-is rather than guessing intent.
+            committed = pending
+
+    for asset, weight in committed.items():
+        st.session_state[_slider_key(asset)] = weight
+    st.session_state[history_key] = dict(committed)
+
+    for row in allocation:
+        asset = row["asset"]
+        label_col, value_col, slider_col = st.columns([2, 1, 5])
+        with label_col:
+            st.markdown(_label_markup(row))
+        with slider_col:
+            st.slider(
+                str(asset),
+                min_value=0.0,
+                max_value=100.0,
+                step=0.5,
+                key=_slider_key(asset),
+                label_visibility="collapsed",
+            )
+        with value_col:
+            st.markdown(f"`{committed[asset]:.1f}%`")
+
+    df_allocation = pd.DataFrame(
+        [
+            {"asset": display_labels.get(asset, asset), "weight_pct": w}
+            for asset, w in committed.items()
+        ]
+    )
+    fig = px.pie(
+        df_allocation,
+        names="asset",
+        values="weight_pct",
+        title="Simulated weight per asset (%)",
+        hole=0.55,
+    )
+    st.plotly_chart(
+        theme.apply_chart_theme(fig),
+        width="stretch",
+        key=f"pie::{platform_name}::{basket_id}::{scenario_id}",
+    )
+    st.dataframe(
+        df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
+        width="stretch",
+        hide_index=True,
+        key=f"table::{platform_name}::{basket_id}::{scenario_id}",
+    )
+
+    return committed
+
+
 def chart_mode_axis_label(chart_mode: str) -> str:
     """Y-axis label for the active chart mode, shared by every chart that
     uses `to_display_series`."""
@@ -254,11 +599,72 @@ def chart_mode_axis_label(chart_mode: str) -> str:
     return "Accumulated return (%)"
 
 
+def require_login() -> None:
+    """Gates the whole app behind one shared username/password, read from
+    `APP_USERNAME` / `APP_PASSWORD` — `.env` locally (via `load_dotenv()`,
+    same mechanism `GLIDER_API_KEY` already relies on) or this app's
+    Secrets panel if deployed on Streamlit Community Cloud (which exposes
+    secrets as environment variables too, so `os.environ.get` already
+    works in both places — no separate `st.secrets` branch needed). See
+    `.env.example` for the exact keys.
+
+    Renders a centered login form (with `theme.render_login_logos()` above
+    it) and calls `st.stop()` until `st.session_state["authenticated"]` is
+    `True` — nothing below this call in `app.py` ever renders for a
+    logged-out visitor. If the credentials aren't configured at all, the
+    gate fails *closed*: every visitor is blocked with a setup message,
+    never silently let through (same principle as `safe_call` — never do
+    the unsafe thing quietly).
+
+    Credentials are compared with `hmac.compare_digest` rather than `==`
+    to avoid leaking their length/contents through response-time timing,
+    for both the username and the password.
+    """
+    if st.session_state.get("authenticated"):
+        return
+
+    expected_username = os.environ.get("APP_USERNAME", "").strip()
+    expected_password = os.environ.get("APP_PASSWORD", "")
+
+    _, center_col, _ = st.columns([1, 1.4, 1])
+    with center_col:
+        theme.render_login_logos()
+        st.markdown("### Sign in")
+
+        if not expected_username or not expected_password:
+            st.error(
+                "Login isn't configured — set APP_USERNAME and "
+                "APP_PASSWORD in .env (see .env.example) for local runs, "
+                "or in this app's Secrets if it's deployed on Streamlit "
+                "Community Cloud."
+            )
+            st.stop()
+
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in", width="stretch")
+
+        if submitted:
+            username_ok = hmac.compare_digest(username, expected_username)
+            password_ok = hmac.compare_digest(password, expected_password)
+            if username_ok and password_ok:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect username or password.")
+
+    st.stop()
+
+
 # --- UI ----------------------------------------------------------------
 
 
-st.set_page_config(page_title="Rebalancing Simulator", layout="wide")
+st.set_page_config(
+    page_title="Rebalancing Simulator", layout="wide", page_icon=theme.page_icon()
+)
 theme.inject_css()
+require_login()
 
 with st.sidebar:
     st.header("Control Panel")
@@ -297,10 +703,10 @@ theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
 
 # Per-basket TVL, when available, comes from the same discover_baskets()
 # rows the sidebar already fetched (cached) — QuantAMM has real per-pool
-# TVL there; Reserve's subgraph has no TVL field, so tvl_usd is always None
-# for it (see each adapter's discover_baskets docstring). Glider additionally
-# shows wallet count, which isn't part of the shared discovery shape and
-# needs its own (also cached) discover_strategies call.
+# TVL there, and Reserve has real per-basket market cap there too (see
+# each adapter's discover_baskets docstring). Glider additionally shows
+# wallet count, which isn't part of the shared discovery shape and needs
+# its own (also cached) discover_strategies call.
 basket_rows, basket_rows_error = safe_call(cached_discover_baskets, platform_name)
 basket_match = None
 if basket_rows:
@@ -340,10 +746,11 @@ else:
 
 allocation, allocation_error = safe_call(cached_get_current_allocation, platform_name, basket_id)
 
-edited_weights: dict[str, float] = {}
 real_weights: dict[str, float] = {}
 price_refs: dict[str, str | None] = {}
 display_labels: dict[str, str] = {}
+scenarios: list[dict] = []
+scenario_edited_weights: dict[str, dict[str, float]] = {}
 
 st.subheader("Allocation")
 if allocation_error:
@@ -353,114 +760,37 @@ elif not allocation:
 else:
     price_refs = {row["asset"]: row.get("price_ref") for row in allocation}
     display_labels = {row["asset"]: (row.get("display_asset") or row["asset"]) for row in allocation}
-
-    def _label_markup(row: dict) -> str:
-        """Human-readable label first; token address/explorer link as
-        secondary metadata, per row's `display_asset`/`explorer_url`
-        (see adapters/pricing.py)."""
-        label = row.get("display_asset") or row["asset"]
-        markup = f"**{label}**"
-        if row.get("explorer_url"):
-            markup += f" [↗]({row['explorer_url']})"
-        return markup
+    real_weights = {row["asset"]: round(row["weight_pct"], 1) for row in allocation}
 
     with st.expander("Methodology"):
         st.caption(
             "Adjust each asset's concentration — the sliders start at the real "
             "weights. Moving one asset proportionally rescales the others so "
-            "the total always stays at 100%. The simulated performance curve "
-            "below uses these weights."
+            "the total always stays at 100%. Each tab is an independent weight "
+            "scenario for this same basket — click a tab to switch to it, "
+            "click the tab you're already on to rename it, ✕ to close it, "
+            "and ＋ to open a new one. Every tab's simulated performance "
+            "curve is overlaid on the chart below to compare them, even "
+            "while it isn't the one showing."
         )
 
-    def _slider_key(asset: str) -> str:
-        return f"w::{platform_name}::{basket_id}::{asset}"
+    scenarios = get_scenarios(platform_name, basket_id)
+    active_id = render_tab_bar(platform_name, basket_id, scenarios)
+    active_scenario = next(s for s in scenarios if s["id"] == active_id)
 
-    def _history_key() -> str:
-        return f"prev_w::{platform_name}::{basket_id}"
-
-    real_weights = {row["asset"]: round(row["weight_pct"], 1) for row in allocation}
-    history_key = _history_key()
-    reset_clicked = st.button("Reset to real weights")
-
-    if reset_clicked or history_key not in st.session_state:
-        committed = dict(real_weights)
-    else:
-        prev_committed = st.session_state[history_key]
-        pending = {
-            asset: st.session_state.get(_slider_key(asset), prev_committed.get(asset, real))
-            for asset, real in real_weights.items()
-        }
-        changed = [
-            asset
-            for asset, value in pending.items()
-            if abs(value - prev_committed.get(asset, value)) > 1e-9
-        ]
-        if len(changed) == 1:
-            # Proportional rebalance: the dragged asset keeps its new
-            # value; every other asset is scaled to fill the remaining
-            # percentage, preserving their relative proportions — so the
-            # sum always stays at 100% without a separate normalization
-            # step (see docs/rebalancing-simulator.md).
-            changed_asset = changed[0]
-            new_value = max(0.0, min(100.0, pending[changed_asset]))
-            others = [a for a in pending if a != changed_asset]
-            remaining = 100.0 - new_value
-            prev_others_total = sum(prev_committed.get(a, 0.0) for a in others)
-            committed = {changed_asset: new_value}
-            if prev_others_total > 0:
-                for a in others:
-                    committed[a] = prev_committed.get(a, 0.0) / prev_others_total * remaining
-            elif others:
-                equal_share = remaining / len(others)
-                for a in others:
-                    committed[a] = equal_share
-        else:
-            # 0 or 2+ diffs: basket/platform just switched, or nothing
-            # changed yet — use pending as-is rather than guessing intent.
-            committed = pending
-
-    for asset, weight in committed.items():
-        st.session_state[_slider_key(asset)] = weight
-    st.session_state[history_key] = dict(committed)
-
-    for row in allocation:
-        asset = row["asset"]
-        label_col, value_col, slider_col = st.columns([2, 1, 5])
-        with label_col:
-            st.markdown(_label_markup(row))
-        with slider_col:
-            st.slider(
-                str(asset),
-                min_value=0.0,
-                max_value=100.0,
-                step=0.5,
-                key=_slider_key(asset),
-                label_visibility="collapsed",
-            )
-        with value_col:
-            st.markdown(f"`{committed[asset]:.1f}%`")
-
-    edited_weights = committed
-
-    df_allocation = pd.DataFrame(
-        [
-            {"asset": display_labels.get(asset, asset), "weight_pct": w}
-            for asset, w in edited_weights.items()
-        ]
+    render_scenario_editor(
+        active_scenario,
+        allocation,
+        real_weights,
+        price_refs,
+        display_labels,
+        platform_name,
+        basket_id,
     )
-    fig = px.pie(
-        df_allocation,
-        names="asset",
-        values="weight_pct",
-        title="Simulated weight per asset (%)",
-        hole=0.55,
-    )
-    st.plotly_chart(theme.apply_chart_theme(fig), use_container_width=True)
-    st.dataframe(
-        df_allocation.rename(columns={"asset": "Asset", "weight_pct": "Simulated weight (%)"}),
-        use_container_width=True,
-        hide_index=True,
-    )
+
+    for scenario in scenarios:
+        hist_key = f"prev_w::{platform_name}::{basket_id}::{scenario['id']}"
+        scenario_edited_weights[scenario["id"]] = st.session_state.get(hist_key, real_weights)
 
 # --- performance curve: real vs. simulated with adjusted weights -----------
 
@@ -488,15 +818,17 @@ with st.expander("How to read this chart"):
     st.caption(
         f"**{SERIES_REAL}** comes straight from the platform's own performance "
         "source (see adapter) — it reflects whatever rebalancing actually "
-        f"happened on-chain/in the strategy. **{SERIES_HODL}** and "
-        f"**{SERIES_ADJUSTED}** are both computed here by recombining each "
-        "asset's individual historical price (via DefiLlama) — never taken "
-        "from the platform — so an asset with no available price history is "
-        "excluded from both, listed as such, never invented. HODL always "
-        "uses the basket's real current weights, static, regardless of the "
-        "sliders above; Adjusted uses whatever weights the sliders are set "
-        "to right now. With the sliders at their real/reset values, Adjusted "
-        "and HODL use the same weights and should track closely — small "
+        f"happened on-chain/in the strategy. **{SERIES_HODL}** and every "
+        "**Adjusted buy-and-hold (…)** line are computed here by recombining "
+        "each asset's individual historical price (via DefiLlama) — never "
+        "taken from the platform — so an asset with no available price "
+        "history is excluded from all of them, listed as such, never "
+        "invented. HODL always uses the basket's real current weights, "
+        "static, regardless of any tab's sliders. Each Adjusted line reflects "
+        "one weight-scenario tab's sliders — open more tabs (the ＋ above) "
+        "to compare several what-if allocations on this same chart. With a "
+        "tab's sliders at their real/reset values, its Adjusted "
+        "line and HODL use the same weights and should track closely — small "
         "differences can still appear from excluded assets or data timing."
     )
 
@@ -524,26 +856,35 @@ if real_weights:
         df_hodl["series"] = SERIES_HODL
         perf_frames.append(df_hodl)
 
-if edited_weights:
-    weighted_assets = [
-        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
-        for asset, weight in edited_weights.items()
-    ]
-    sim_points, excluded = simulate_weighted_performance(weighted_assets)
-    if sim_points:
-        df_sim = pd.DataFrame(sim_points)
-        df_sim["series"] = SERIES_ADJUSTED
-        perf_frames.append(df_sim)
-        if excluded:
-            st.caption(
-                "Excluded from the simulation for lack of historical price: "
-                + ", ".join(display_labels.get(a, a) for a in excluded)
-            )
-    else:
+if scenario_edited_weights:
+    any_scenario_simulated = False
+    all_excluded: set[str] = set()
+    for scenario in scenarios:
+        weights = scenario_edited_weights.get(scenario["id"])
+        if not weights:
+            continue
+        weighted_assets = [
+            {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+            for asset, weight in weights.items()
+        ]
+        sim_points, excluded = simulate_weighted_performance(weighted_assets)
+        all_excluded.update(excluded)
+        if sim_points:
+            any_scenario_simulated = True
+            df_sim = pd.DataFrame(sim_points)
+            df_sim["series"] = adjusted_series_label(scenario["label"])
+            perf_frames.append(df_sim)
+
+    if not any_scenario_simulated:
         st.caption(
             "Could not simulate performance with the adjusted weights — "
             "none of this allocation's assets has historical price "
             "available in the source used (DefiLlama)."
+        )
+    elif all_excluded:
+        st.caption(
+            "Excluded from the simulation for lack of historical price: "
+            + ", ".join(display_labels.get(a, a) for a in sorted(all_excluded))
         )
 
 if perf_frames:
@@ -557,7 +898,46 @@ if perf_frames:
         title=f"Performance — real vs. HODL vs. adjusted ({chart_mode.lower()})",
         labels={"date": "Date", "display_value": y_label},
     )
-    st.plotly_chart(theme.apply_chart_theme(fig_perf), use_container_width=True)
+    st.plotly_chart(theme.apply_chart_theme(fig_perf), width="stretch")
+
+    st.markdown("**Performance summary**")
+    metrics_rows = []
+    for series_name, group in df_perf_all.groupby("series", sort=False):
+        m = compute_series_metrics(group)
+        metrics_rows.append(
+            {
+                "Series": series_name,
+                "Total return": f"{m['total_return_pct']:+.1f}%" if m["total_return_pct"] is not None else "—",
+                "Volatility (ann.)": f"{m['volatility_pct']:.1f}%" if m["volatility_pct"] is not None else "—",
+                "Max drawdown": f"{m['max_drawdown_pct']:.1f}%" if m["max_drawdown_pct"] is not None else "—",
+            }
+        )
+    st.dataframe(
+        pd.DataFrame(metrics_rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Series": st.column_config.TextColumn(
+                help="Which performance line this row summarizes — see the chart and 'How to read this chart' above.",
+            ),
+            "Total return": st.column_config.TextColumn(
+                help="Cumulative % change over the whole window — the same number the chart plots, read off its last point.",
+            ),
+            "Volatility (ann.)": st.column_config.TextColumn(
+                help="Annualized std. dev. of period-over-period returns, using this series' own observed spacing between data points — an approximation, not a precise figure.",
+            ),
+            "Max drawdown": st.column_config.TextColumn(
+                help="Worst peak-to-trough drop in cumulative return over the window.",
+            ),
+        },
+    )
+    st.caption(
+        "Hover a column header for what it measures. Every metric is "
+        "computed independently per series, from that series' own points "
+        "only — sources aren't guaranteed to share a cadence, so treat "
+        "Volatility as an approximation, not a precise figure. \"—\" means "
+        "that series doesn't have enough points to compute that metric."
+    )
 
 # --- strategy comparison overlay --------------------------------------------
 
@@ -591,7 +971,7 @@ else:
             title=f"Strategy comparison ({chart_mode.lower()})",
             labels={"date": "Date", "display_value": y_label},
         )
-        st.plotly_chart(theme.apply_chart_theme(fig_comparison), use_container_width=True)
+        st.plotly_chart(theme.apply_chart_theme(fig_comparison), width="stretch")
         st.caption(
             "Each series uses its own platform's native performance method/source — "
             "methodologies differ across platforms (see adapter docstrings), so this "
@@ -618,7 +998,7 @@ with st.expander("Rebalance history"):
                 for h in reversed(history)  # most recent first
             ]
         )
-        st.dataframe(df_history, use_container_width=True, hide_index=True)
+        st.dataframe(df_history, width="stretch", hide_index=True)
 
 with st.expander("Protocol details"):
     st.caption(
@@ -637,3 +1017,5 @@ with st.expander("Protocol details"):
             st.write(f"~{freq:.1f} events/month" if freq is not None else "Insufficient data (history too short).")
         else:
             st.write("No history available to estimate.")
+
+theme.render_footer()

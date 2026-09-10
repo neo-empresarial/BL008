@@ -43,6 +43,12 @@ Research done:
   rebalance. We make this explicit in each history `description`
   (`"signal-driven"`), so as not to give the impression a decision was
   recorded like on Reserve.
+- QuantAMM has no curated discovery API of its own (unlike Reserve's
+  `GET /discover/dtfs`). The raw `QUANT_AMM_WEIGHTED` pool list also
+  includes test pools and a duplicate Safe Haven deployment — Balancer
+  itself tags those `BLACK_LISTED` (confirmed via `poolGetPools.tags`), so
+  `discover_baskets()` excludes that tag server-side (`where.tagNotIn`)
+  instead of hardcoding pool addresses.
 """
 
 from __future__ import annotations
@@ -69,7 +75,14 @@ MIN_WEIGHT_SHIFT_PCT = 1.0
 # format, e.g. MAINNET, BASE, SONIC).
 EXAMPLE_BASKETS = {
     "Safe Haven — BTC:PAXG:USDC (mainnet)": "MAINNET:0x6b61d8680c4f9e560c8306807908553f95c749c5",
+    "Base Macro (base)": "BASE:0xb4161aea25bd6c5c8590ad50deb4ca752532f05d",
+    "Sonic Macro (sonic)": "SONIC:0x74dc857d5567a3b087e79b96b91cdc8099b2fa34",
 }
+
+# Balancer's own moderation tag for test/duplicate pools (confirmed via
+# poolGetPools.tags — see module docstring). Excluded from discovery via
+# `where.tagNotIn` instead of an address allowlist.
+EXCLUDED_POOL_TAG = "BLACK_LISTED"
 
 # Chain (Balancer's GqlChain enum) -> chain slug used by DefiLlama. Only the
 # chains where the two names diverge/are known — a chain outside this map
@@ -155,11 +168,16 @@ def _fetch_pool(chain: str, address: str) -> dict[str, Any]:
 
 
 _POOLS_QUERY = """
-query ListQuantAmmPools($chains: [GqlChain!]!, $first: Int!, $skip: Int!) {
+query ListQuantAmmPools($chains: [GqlChain!]!, $first: Int!, $skip: Int!, $excludedTag: String!) {
   poolGetPools(
     first: $first
     skip: $skip
-    where: { chainIn: $chains, poolTypeIn: [QUANT_AMM_WEIGHTED], protocolVersionIn: [3] }
+    where: {
+      chainIn: $chains
+      poolTypeIn: [QUANT_AMM_WEIGHTED]
+      protocolVersionIn: [3]
+      tagNotIn: [$excludedTag]
+    }
   ) {
     address
     chain
@@ -173,10 +191,11 @@ _DISCOVERY_PAGE_SIZE = 200
 
 
 def discover_baskets() -> list[dict[str, Any]]:
-    """Lists every QuantAMM pool (`poolTypeIn: [QUANT_AMM_WEIGHTED]`,
-    Balancer v3 only) across every chain in CHAIN_TO_DEFILLAMA, via the same
-    Balancer GraphQL API `_fetch_pool` uses — paginated with `skip` until a
-    page comes back short.
+    """Lists QuantAMM's real BTFs across every chain in CHAIN_TO_DEFILLAMA,
+    via the same Balancer GraphQL API `_fetch_pool` uses — paginated with
+    `skip` until a page comes back short, excluding pools Balancer itself
+    tags `BLACK_LISTED` (test pools and duplicate deployments — see module
+    docstring).
 
     Returns list[{"basket_id", "name", "tvl_usd", "chain"}], sorted by TVL
     descending (ties/missing TVL fall back to name). `tvl_usd` comes from
@@ -188,7 +207,12 @@ def discover_baskets() -> list[dict[str, Any]]:
     while True:
         data = _graphql(
             _POOLS_QUERY,
-            {"chains": list(CHAIN_TO_DEFILLAMA.keys()), "first": _DISCOVERY_PAGE_SIZE, "skip": skip},
+            {
+                "chains": list(CHAIN_TO_DEFILLAMA.keys()),
+                "first": _DISCOVERY_PAGE_SIZE,
+                "skip": skip,
+                "excludedTag": EXCLUDED_POOL_TAG,
+            },
         )
         page = data.get("poolGetPools") or []
         for pool in page:

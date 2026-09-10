@@ -31,41 +31,96 @@ of multiple example strategies across platforms. Invariants:
 ## Surface
 
 `app.py` is the entrypoint (`streamlit run app.py`), single page, no
-routing, no tabs, **no side-by-side columns for the main flow** — every
-section stacks vertically so the page scrolls naturally and the
-performance chart gets full page width.
+routing, **no side-by-side columns for the main flow** — every section
+stacks vertically so the page scrolls naturally and the performance chart
+gets full page width. The one exception is the Allocation section, which
+has a browser-style tab strip for its weight scenarios (see below).
 
+- **Login gate** — `require_login()`, called right after `theme.inject_css()`,
+  before anything else: a centered form (NEO/Balancer logos, username,
+  password) that blocks the rest of the page until it succeeds. See
+  "Login gate" under Setup below.
 - **Sidebar** — platform picker; basket picker built from that platform's
   live `discover_baskets()` (curated `EXAMPLE_BASKETS` pinned at the top,
   falling back to them alone if discovery fails) or a manual `basket_id`;
   and a compact multi-select, across all three platforms' discovered
   baskets, to pick strategies for the comparison overlay (`<Platform> /
   <label>` options) — see Basket discovery below.
-- **Header** — compact console header (platform badge, basket id).
-- **Allocation** — full-width section: methodology expander, reset button,
-  one row per asset (label, current %, slider), donut chart, table.
+- **Header** — NEO/Balancer logos (small, when present) above a compact
+  console header (platform badge, basket id).
+- **Allocation** — full-width section: methodology expander, then a
+  hand-rolled tab strip (one button per weight scenario plus a "✕", and a
+  trailing ＋), and below it only the *active* scenario's editor — reset
+  button, one row per asset (label, current %, slider), donut chart, and
+  table. See Weight scenario tabs below.
 - **Performance** — full-width section. Its subheader and the chart-mode
   control (`st.segmented_control` when the installed Streamlit has it,
   else `st.radio(horizontal=True)`) share one row via `st.columns`, so the
   toggle visually belongs to this chart rather than sitting disconnected at
   the top of the page. A "How to read this chart" expander sits right
   below, explaining the three series (see Rules and behavior). The chart
-  itself follows.
+  itself follows, then a "Performance summary" table with total
+  return/volatility/max drawdown per series (see Rules and behavior).
 - **Strategy comparison** — below Performance; renders only when the
   sidebar multi-select has at least one entry; reuses the same chart-mode
   value.
 - **Secondary sections** — `st.expander("Rebalance history")` and
   `st.expander("Protocol details")` (who decides + rebalance frequency),
   collapsed by default, at the bottom of the page.
+- **Footer** — `theme.render_footer()`, at the very end of the page:
+  project name/subtitle, `FOOTER_LINK_SECTIONS` (GitHub/docs, the three
+  compared platforms, data sources) in columns — each link marked with a
+  small arrow-up-right icon, since all of them are external — a GitHub
+  icon button, and a bottom disclaimer line. Its background band spans
+  the full main content area (not capped at the ~1200px reading width the
+  rest of the page uses, and reaching the true bottom edge of the page —
+  `.block-container` carries no bottom padding of its own, since the
+  footer is always the last section and supplies its own) via a CSS
+  container-query trick, up to the sidebar's edge — going further, under
+  the sidebar itself, breaks the page's scroll-following in Streamlit's
+  layout (confirmed empirically); see the `.app-footer` CSS comment in
+  `ui/theme.py` for the full reasoning.
 
-`.streamlit/config.toml` sets the base dark theme (sans-serif, minimal
-palette); `ui/theme.py` layers app-level CSS — extra top padding so the
-header isn't clipped under Streamlit's toolbar, rounded card-like
-chart/table surfaces with `overflow: hidden` so the rounding actually
-clips the chart's own background, address/link styling — and a shared
-Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of 420px) applied
-to every chart via `theme.apply_chart_theme`. Neither file touches data or
-adapter logic.
+`.streamlit/config.toml` sets the base dark theme; `ui/theme.py` layers
+app-level CSS — extra top padding so the header isn't clipped under
+Streamlit's toolbar, rounded card-like chart/table surfaces with
+`overflow: hidden` so the rounding actually clips the chart's own
+background, form inputs painted one step darker than `SURFACE` (so they
+stay visible inside `stForm`, whose fill matches Streamlit's
+`secondaryBackgroundColor`), form submit styled like the active weight-
+scenario tab (`NEUTRAL_HIGHLIGHT` fill + `TEXT`, not blue `ACCENT`),
+address/link styling, a page-wide grain texture, the footer — and a
+shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
+420px) applied to every chart via `theme.apply_chart_theme`. Neither
+file touches data or adapter logic.
+
+The palette (both files) is ported from the `reclamm-monorepo` frontend's
+Chakra theme — see the constants' docstring in `ui/theme.py` for the exact
+token each color comes from. That frontend forces dark mode always, so
+this is that theme's `dark` token set, not a Streamlit-original palette;
+re-syncing after a reclamm palette change means re-reading those same
+token files and updating the hex constants here by hand (no shared
+package/build step ties the two).
+
+`public/` holds three assets ported from the same frontend
+(`reclamm-monorepo/apps/reclamm-frontend/public/images/`):
+`background-noise.png` is tiled full-page by `theme._noise_background_css`
+under a 97%-opaque layer of the page background — replicating reclamm's
+`Noise` component's two-layer approach in a single CSS `background-image`
+rule (no extra wrapper element, since Streamlit's DOM isn't ours to nest
+arbitrarily). `favicon-light.png` (the Balancer stacked-stones mark, dark
+variant) is the browser-tab favicon via `theme.page_icon()`, passed to
+`st.set_page_config(page_icon=...)` — `None` (Streamlit's own default
+favicon) if the file's missing. `granite-1.jpg` is still staged but
+unused — reserved for a follow-up (per-chart granite backgrounds).
+`public/balancer-logo.png` (the Balancer mark, white variant — cropped to
+its visible content by `theme._logo_img_tag`, see below) is shipped;
+`public/neo-logo.png` is **not** (no source to port it from) — add it
+locally to also brand the login screen and the console header with NEO's
+mark alongside Balancer's (see
+`theme.render_login_logos()`/`theme.render_header()` and "Login gate"
+under Setup below); the app runs fine without either, both spots just
+show no logos.
 
 ### Adapter interface (implemented identically by all three adapters)
 
@@ -187,23 +242,75 @@ Per-adapter discovery source and scope:
 | Adapter | Source | Scope |
 |---|---|---|
 | `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
-| `reserve.discover_baskets` | Goldsky `dtfs` query, paginated with `skip` per chain (mainnet/base/bsc) | **Index DTFs only** — this subgraph has no Yield DTF entities, so Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example |
-| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | Chains outside `CHAIN_TO_DEFILLAMA` are never queried |
+| `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example. Allocation/history use `GET /dtf/rebalance` (Goldsky weights by nonce; discover `basket` fallback); performance uses DefiLlama then `GET /historical/dtf` |
+| `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`, `tagNotIn: [EXCLUDED_POOL_TAG]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | **Excludes `BLACK_LISTED` pools** — QuantAMM has no curated discovery API, but Balancer itself tags test pools and duplicate deployments (e.g. a second Safe Haven) `BLACK_LISTED`; excluding that tag server-side currently leaves Safe Haven, Base Macro and Sonic Macro |
 
 The comparison multi-select in the sidebar calls `build_basket_options` for
 every platform (so switching the main platform picker doesn't limit what
 can be compared) and flattens them into `"{platform} / {label}"` options —
-this can be a long list (Reserve alone discovers 300+ Index DTFs at the
-time of writing); there is no search/filter on top of it yet.
+this can be a long list; there is no search/filter on top of it yet.
 
-**Proportional allocation rebalancing.** Each basket's committed weights
-are tracked in `st.session_state["prev_w::{platform}::{basket_id}"]`. On
-each rerun, `app.py` compares each slider's pending value (from
-`st.session_state`) against that basket's last committed weights:
+**Weight scenario tabs.** Each basket can hold several independent weight
+scenarios ("tabs"), so different what-if allocations can be tweaked
+separately and compared on the same performance chart. `get_scenarios`
+stores the tab list at `st.session_state["scenarios::{platform}::{basket_id}"]`
+as `list[{"id", "label"}]`, seeded with one `"Scenario 1"` tab the first
+time a basket is opened.
 
-- **0 or 2+ assets differ** (basket/platform just switched, or first
-  render) — the pending values are used as-is (i.e. the real weights on
-  first load).
+`render_tab_bar` draws the strip itself and owns which tab is *active*
+(`st.session_state["active_scenario::{platform}::{basket_id}"]`) — `st.tabs`
+isn't used here because it can't host a per-tab close control or a
+trailing "+", so the strip is hand-rolled from one row of `st.columns`
+instead (styled to read as tabs by `ui/theme.py`'s CSS, keyed off the
+`st-key-<key>` class Streamlit gives a widget with an explicit `key=`).
+Per scenario it renders a select button (`type="primary"` when active, so
+Streamlit's own accent styling *is* the "active tab" look) plus a small
+"✕" (`type="tertiary"`, disabled once only one tab remains). Streamlit has
+no double-click event to bind a rename to, so clicking a tab that's
+*already* active is the stand-in: instead of switching (there's nowhere
+else to switch to) or doing nothing, it swaps that tab's select button for
+an inline `text_input` prefilled with the current label. Renaming commits
+via the `text_input`'s `on_change` callback (`_commit_rename`) rather than
+a separate confirm button — Streamlit calls it the instant the value
+changes (Enter or losing focus) and reruns the script right after, so
+typing a name and pressing Enter (or clicking elsewhere) is enough; an
+emptied-out value is ignored rather than leaving a tab unnamed. A trailing
+"＋" (also `type="tertiary"`) appends a new scenario (`uuid4().hex[:8]`
+id, default label `"Scenario {n}"`) and makes it active.
+
+Because the row's column widths are computed from the *current* scenario
+list/active id at the top of the function, a button click that changes
+either (switch tabs, enter rename mode, add, or close) calls `st.rerun()`
+before returning — otherwise the strip would only reflect the change one
+interaction later, since writing to `st.session_state` alone doesn't
+trigger a second rerun by itself. A rename *commit* doesn't need this: its
+`on_change` callback already runs (and already updated `scenario["label"]`
+and cleared the renaming flag in `st.session_state`) before `render_tab_bar`
+is even called again on the rerun the callback itself triggers.
+
+Only the *active* scenario's editor is rendered below the strip each run —
+like a browser tab, every other scenario's content stays hidden.
+`render_scenario_editor` is that editor (the direct successor of what used
+to be the single, un-tabbed allocation editor); it takes one `scenario`
+dict and returns its committed weights. A scenario that isn't active this
+run keeps its last committed weights in `st.session_state` regardless
+(see below) — nothing is lost by switching away from it, and the
+Performance section (further down) reads every scenario's weights back
+from `st.session_state` directly rather than depending on it having been
+rendered this run.
+
+**Proportional allocation rebalancing.** Each tab's committed weights are
+tracked in
+`st.session_state["prev_w::{platform}::{basket_id}::{scenario_id}"]` —
+scoped by scenario id in addition to platform/basket, so tabs never share
+slider state and switching platform/basket starts every tab fresh rather
+than reusing another basket's scenarios. On each rerun, `render_scenario_editor`
+compares each of that tab's slider pending values (from `st.session_state`)
+against that tab's last committed weights:
+
+- **0 or 2+ assets differ** (basket/platform just switched, this tab was
+  just created, or first render) — the pending values are used as-is (i.e.
+  the real weights on first load).
 - **Exactly 1 asset differs** (the normal case — the user dragged one
   slider) — that asset keeps its new value; every other asset is scaled
   proportionally, by its share of the *previous* total of the other
@@ -239,31 +346,72 @@ usable price, simulation is skipped entirely for that series (no chart
 series is added; for Adjusted, a caption explains why — HODL fails silently
 since it's a secondary series).
 
-**Performance chart series.** Up to three series are plotted together,
-built independently and only added when data is available:
+**Performance chart series.** Two fixed series plus one Adjusted series
+per open weight-scenario tab are plotted together, built independently and
+only added when data is available:
 
-| Series constant | Source | Reacts to sliders? |
+| Series | Source | Reacts to sliders? |
 |---|---|---|
 | `SERIES_REAL` = "Real strategy (with rebalancing)" | `get_performance` — the platform's own method/source | No — platform data |
 | `SERIES_HODL` = "HODL (real weights, no rebalancing)" | `simulate_weighted_performance` over `real_weights` (the basket's actual current weights, from `get_current_allocation`) | No — always the real weights |
-| `SERIES_ADJUSTED` = "Adjusted buy-and-hold (your weights)" | `simulate_weighted_performance` over `edited_weights` (the committed slider weights) | Yes |
+| `adjusted_series_label(scenario["label"])` = "Adjusted buy-and-hold ({tab name})", one per tab | `simulate_weighted_performance` over that tab's committed weights (`scenario_edited_weights[scenario["id"]]`) | Yes — that tab's sliders only |
 
-With the sliders at their real/reset values, HODL and Adjusted use the
-same weights and should track closely (not necessarily identically — HODL
-and Adjusted are computed independently, and each can silently exclude a
-different asset only if their weight sets differ, which they don't at
-reset — in practice they match). Real can differ from both even then,
-because Real reflects whatever rebalancing the platform actually performed
-over time, while HODL/Adjusted assume the weights were fixed for the whole
-`SIMULATION_DAYS` window. The "How to read this chart" expander above the
-chart states this in user-facing language.
+`app.py` loops every scenario in the tab list and reads its committed
+weights back from `st.session_state["prev_w::{platform}::{basket_id}::{scenario_id}"]`
+(falling back to `real_weights` for a tab that was added but never
+rendered/edited yet), then calls `simulate_weighted_performance` once per
+tab — so adding a tab adds one more Adjusted line to the chart rather than
+replacing the existing one, and a tab that isn't the active one this run
+still contributes its line (see Weight scenario tabs above). This is what
+makes tab-to-tab comparison possible. Excluded assets are unioned across
+every tab's simulation into a single caption (exclusion depends only on
+price availability, not on a tab's weights, so in practice every tab
+excludes the same assets).
+
+With a tab's sliders at their real/reset values, HODL and that tab's
+Adjusted line use the same weights and should track closely (not
+necessarily identically — HODL and Adjusted are computed independently,
+and each can silently exclude a different asset only if their weight sets
+differ, which they don't at reset — in practice they match). Real can
+differ from both even then, because Real reflects whatever rebalancing the
+platform actually performed over time, while HODL/Adjusted assume the
+weights were fixed for the whole `SIMULATION_DAYS` window. The "How to
+read this chart" expander above the chart states this in user-facing
+language.
+
+**Performance summary table.** Right below the Performance chart, one row
+per series in `df_perf_all` (`compute_series_metrics`) — Total return, an
+annualized Volatility, and Max drawdown — so scenarios can be compared by
+number, not just by eyeballing overlaid lines. Each column header carries
+a `st.column_config.TextColumn(help=...)` tooltip with a one-line
+explanation of that metric, shown on hover:
+
+- **Total return** is just that series' own last `percent_change` value —
+  the same number the chart already plots, read off the end.
+- **Max drawdown** is the worst peak-to-trough drop in the cumulative
+  growth implied by `percent_change` (`1 + percent_change / 100`).
+- **Volatility** is the std. dev. of period-over-period returns on that
+  growth curve, annualized using *that series' own* observed average
+  spacing between points (`365.25 / avg_days_between`) — sources aren't
+  guaranteed to share a cadence (`get_performance`'s `points` are
+  adapter-native), so this is an approximation, not a precise figure;
+  needs at least `MIN_POINTS_FOR_VOLATILITY` (3) points to attempt it.
+
+Every metric is computed independently per series, from that series' own
+points only — same "no cross-series alignment" principle as the comparison
+overlay below. A metric that needs more history than a series has comes
+back `None` and renders as "—", never estimated from insufficient data.
+Because HODL and a reset tab's Adjusted line share the same weights (see
+above), their rows in this table match exactly, not just visually track.
 
 **Chart mode.** `CHART_MODES = ["Indexed value", "Percent return", "Growth
 of $10k"]`. The control (`st.segmented_control` or `st.radio` fallback,
 see Surface) drives both the Performance chart and the comparison overlay
 — both call the same `to_display_series`/`chart_mode_axis_label` helpers
 and share one `chart_mode` value, so switching it updates both charts
-identically.
+identically. The performance summary table is unaffected by it — its
+metrics are always computed from the raw `percent_change` values, not
+whichever display mode the chart is currently in.
 
 **TVL display.** `app.py` first looks up the selected `basket_id` in that
 platform's already-fetched `cached_discover_baskets` rows (`basket_match`)
@@ -277,11 +425,12 @@ for a per-basket `tvl_usd`:
   collection").
 - **QuantAMM**: `basket_match["tvl_usd"]` is real per-pool TVL
   (`dynamicData.totalLiquidity`), shown directly as a metric when present.
-- **Reserve**: `basket_match["tvl_usd"]` is always `None` (this subgraph
-  has no TVL field), so it falls back to `get_tvl_usd_defillama()` — the
-  **entire protocol's** TVL — shown as a caption explicitly labeled
-  "cross-check", never presented as if it were basket-specific. If even
-  that fails, a plain "TVL unavailable" caption is shown.
+- **Reserve**: `basket_match["tvl_usd"]` is the discovery API's `marketCap`,
+  shown directly as a metric when present. It falls back to
+  `get_tvl_usd_defillama()` — the **entire protocol's** TVL — shown as a
+  caption explicitly labeled "cross-check" only when the basket isn't in
+  the discovered rows (e.g. a manually-pasted, off-catalog `basket_id`). If
+  even that fails, a plain "TVL unavailable" caption is shown.
 
 **Rebalance frequency.** `estimate_monthly_frequency` needs at least 2
 dated history events to compute anything; it divides event count by
@@ -312,19 +461,18 @@ comparison entry) never takes down the rest of the page.
   the comparison overlay carries an explicit caption saying so, and the
   one metric framed as directly comparable is who decides a rebalance and
   how often (protocol details section).
-- No per-basket TVL for Reserve — its subgraph has no TVL field, only the
-  protocol-wide DefiLlama cross-check is available there (see Rules and
-  behavior above). QuantAMM does have real per-pool TVL via discovery.
-- No governance-proposal linkage for Reserve rebalances — the subgraph has
-  no FK between a `Rebalance` and the proposal that approved it, so
-  `description` never names a specific proposal (documented TODO in
-  `adapters/reserve.py`).
-- No composition or rebalance history for Reserve **Yield DTFs** (e.g.
-  eUSD) — `get_current_allocation`/`get_rebalance_history` raise
-  `ReserveAPIError` for these instead of returning partial or guessed data.
-- No search/filter on the basket selects — with hundreds of discovered
-  baskets on some platforms (Reserve in particular), the plain select can
-  be long; search/filter is future work.
+- No governance-proposal linkage for Reserve rebalances — the public
+  surfaces used here have no FK between a rebalance and the proposal that
+  approved it, so `description` never names a specific proposal
+  (documented TODO in `adapters/reserve.py`).
+- No composition for Reserve **Yield DTFs** (e.g. eUSD) —
+  `get_current_allocation` raises `ReserveAPIError` instead of returning
+  partial or guessed data. Index DTFs with no on-chain rebalances yet
+  return `[]` from `get_rebalance_history` and take allocation from
+  discover `basket[].weight`.
+- No search/filter on the basket selects — with dozens of discovered
+  baskets on some platforms, the plain select can be long; search/filter is
+  future work.
 - No invented token symbols anywhere — Glider's `display_asset` either
   comes from a real DefiLlama lookup or falls back to a truncated address;
   it never guesses a name from context.
@@ -363,11 +511,15 @@ comparison entry) never takes down the rest of the page.
 - **HODL and Adjusted can look identical at reset — that's expected, not a
   bug.** Both use the same real weights and the same simulation path at
   that point; see Rules and behavior for why Real still differs.
-- **Reserve weights are by token quantity, not USD value.**
-  `weight_pct` for Reserve is `weightSpotLimit` normalized by its own sum —
-  it does **not** account for each token's price. Two DTFs holding the same
-  quantity ratio but very different token prices will show the same
-  `weight_pct` despite very different USD allocations.
+- **Reserve weight semantics depend on the source.** Goldsky-backed
+  rebalance weights are `weightSpotLimit` normalized by quantity (not USD).
+  Weights from `/dtf/rebalance&nonce=` detail are USD-approximate
+  (proposal units × prices). Discover fallback weights are already 0–100
+  from `basket[].weight`. Two quantity-normalized rows with the same ratio
+  can still imply different USD allocations.
+- **Reserve performance may come from DefiLlama or `/historical/dtf`.**
+  DefiLlama is tried first; young or thinly listed DTF tokens often only
+  resolve via the Reserve historical price series.
 - **QuantAMM's rebalance history is filtered, not raw.** Only snapshots
   where the largest weight shift exceeds `MIN_WEIGHT_SHIFT_PCT` (1.0
   percentage point) become a row. The pool's underlying weight curve is
@@ -404,3 +556,43 @@ comparison entry) never takes down the rest of the page.
 Requires a `.env` file (copy from `.env.example`) with `GLIDER_API_KEY` —
 only needed for the Glider platform; Reserve and QuantAMM use unauthenticated
 public sources. See the "How to run" section in the project `README.md`.
+
+**Login gate.** The same `.env` file also carries `APP_USERNAME` /
+`APP_PASSWORD` — the whole app (`require_login` in `app.py`) is gated
+behind this single shared login, checked before anything else renders.
+Leaving either blank blocks every visitor with a setup message rather than
+silently letting everyone in. On Streamlit Community Cloud, set both in
+the app's **Secrets** panel instead of committing a `.env` file — Cloud
+exposes secrets as environment variables too, so `os.environ.get` (the
+same mechanism `GLIDER_API_KEY` already uses) works unchanged in both
+places. A successful login is remembered only in that browser tab's
+`st.session_state` — refreshing keeps it, but a new session/device asks
+again; there's no "remember me," multi-user accounts, or lockout after
+failed attempts (single shared credential, single unauthenticated
+attempt-count — acceptable for this MVP's threat model, not a general
+auth system). `theme.render_login_logos()` shows the NEO and Balancer
+logos above the form, and `theme.render_header()` shows the same two
+logos (smaller, left-aligned) above the console header on every page once
+logged in — both read from `public/neo-logo.png` / `public/balancer-logo.png`
+(shared by `theme._logos_html`) when present, skipping either (or the
+whole row) rather than showing a broken image if a logo hasn't been added
+to the repo yet.
+
+Getting two unrelated logo files to actually look "the same size" next to
+each other took two fixes in `theme._logo_img_tag`, not one — matching
+just one still left them mismatched:
+- Each logo is embedded as a base64 `<img>` fixed to a set *height* with
+  `width: auto`, rather than `st.image`'s `width="stretch"` (which
+  matches *column* width instead). With two logos of very different
+  source aspect ratios — NEO's is roughly square, Balancer's is a wide
+  wordmark — matching width alone renders them at very different heights.
+- Fixing height on the *raw* files still wasn't enough: NEO's artwork
+  fills nearly its entire canvas, while Balancer's actual glyph sits in a
+  small block surrounded by a wide transparent margin (empirically, only
+  ~17% of that file's canvas height is actual visible content) — scaling
+  the whole padded canvas to a fixed height scales the padding right
+  along with it, so Balancer's logo still looked tiny. `_logo_img_tag`
+  now opens each file with Pillow and crops to `Image.getbbox()` (the
+  bounding box of non-transparent pixels) before embedding, so `height_px`
+  sizes each logo's actual visible mark, not however much blank canvas
+  happens to surround it in the source file.
