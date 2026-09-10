@@ -36,13 +36,18 @@ stacks vertically so the page scrolls naturally and the performance chart
 gets full page width. The one exception is the Allocation section, which
 has a browser-style tab strip for its weight scenarios (see below).
 
+- **Login gate** — `require_login()`, called right after `theme.inject_css()`,
+  before anything else: a centered form (NEO/Balancer logos, username,
+  password) that blocks the rest of the page until it succeeds. See
+  "Login gate" under Setup below.
 - **Sidebar** — platform picker; basket picker built from that platform's
   live `discover_baskets()` (curated `EXAMPLE_BASKETS` pinned at the top,
   falling back to them alone if discovery fails) or a manual `basket_id`;
   and a compact multi-select, across all three platforms' discovered
   baskets, to pick strategies for the comparison overlay (`<Platform> /
   <label>` options) — see Basket discovery below.
-- **Header** — compact console header (platform badge, basket id).
+- **Header** — NEO/Balancer logos (small, when present) above a compact
+  console header (platform badge, basket id).
 - **Allocation** — full-width section: methodology expander, then a
   hand-rolled tab strip (one button per weight scenario plus a "✕", and a
   trailing ＋), and below it only the *active* scenario's editor — reset
@@ -80,10 +85,14 @@ has a browser-style tab strip for its weight scenarios (see below).
 app-level CSS — extra top padding so the header isn't clipped under
 Streamlit's toolbar, rounded card-like chart/table surfaces with
 `overflow: hidden` so the rounding actually clips the chart's own
-background, address/link styling, a page-wide grain texture, the footer —
-and a shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
-420px) applied to every chart via `theme.apply_chart_theme`. Neither file
-touches data or adapter logic.
+background, form inputs painted one step darker than `SURFACE` (so they
+stay visible inside `stForm`, whose fill matches Streamlit's
+`secondaryBackgroundColor`), form submit styled like the active weight-
+scenario tab (`NEUTRAL_HIGHLIGHT` fill + `TEXT`, not blue `ACCENT`),
+address/link styling, a page-wide grain texture, the footer — and a
+shared Plotly layout (colorway, fonts, a `DEFAULT_CHART_HEIGHT` of
+420px) applied to every chart via `theme.apply_chart_theme`. Neither
+file touches data or adapter logic.
 
 The palette (both files) is ported from the `reclamm-monorepo` frontend's
 Chakra theme — see the constants' docstring in `ui/theme.py` for the exact
@@ -99,9 +108,19 @@ package/build step ties the two).
 under a 97%-opaque layer of the page background — replicating reclamm's
 `Noise` component's two-layer approach in a single CSS `background-image`
 rule (no extra wrapper element, since Streamlit's DOM isn't ours to nest
-arbitrarily). `granite-1.jpg` and `favicon-light.png` are staged but
-unused so far — reserved for a follow-up (per-chart granite backgrounds,
-page favicon).
+arbitrarily). `favicon-light.png` (the Balancer stacked-stones mark, dark
+variant) is the browser-tab favicon via `theme.page_icon()`, passed to
+`st.set_page_config(page_icon=...)` — `None` (Streamlit's own default
+favicon) if the file's missing. `granite-1.jpg` is still staged but
+unused — reserved for a follow-up (per-chart granite backgrounds).
+`public/balancer-logo.png` (the Balancer mark, white variant — cropped to
+its visible content by `theme._logo_img_tag`, see below) is shipped;
+`public/neo-logo.png` is **not** (no source to port it from) — add it
+locally to also brand the login screen and the console header with NEO's
+mark alongside Balancer's (see
+`theme.render_login_logos()`/`theme.render_header()` and "Login gate"
+under Setup below); the app runs fine without either, both spots just
+show no logos.
 
 ### Adapter interface (implemented identically by all three adapters)
 
@@ -537,3 +556,43 @@ comparison entry) never takes down the rest of the page.
 Requires a `.env` file (copy from `.env.example`) with `GLIDER_API_KEY` —
 only needed for the Glider platform; Reserve and QuantAMM use unauthenticated
 public sources. See the "How to run" section in the project `README.md`.
+
+**Login gate.** The same `.env` file also carries `APP_USERNAME` /
+`APP_PASSWORD` — the whole app (`require_login` in `app.py`) is gated
+behind this single shared login, checked before anything else renders.
+Leaving either blank blocks every visitor with a setup message rather than
+silently letting everyone in. On Streamlit Community Cloud, set both in
+the app's **Secrets** panel instead of committing a `.env` file — Cloud
+exposes secrets as environment variables too, so `os.environ.get` (the
+same mechanism `GLIDER_API_KEY` already uses) works unchanged in both
+places. A successful login is remembered only in that browser tab's
+`st.session_state` — refreshing keeps it, but a new session/device asks
+again; there's no "remember me," multi-user accounts, or lockout after
+failed attempts (single shared credential, single unauthenticated
+attempt-count — acceptable for this MVP's threat model, not a general
+auth system). `theme.render_login_logos()` shows the NEO and Balancer
+logos above the form, and `theme.render_header()` shows the same two
+logos (smaller, left-aligned) above the console header on every page once
+logged in — both read from `public/neo-logo.png` / `public/balancer-logo.png`
+(shared by `theme._logos_html`) when present, skipping either (or the
+whole row) rather than showing a broken image if a logo hasn't been added
+to the repo yet.
+
+Getting two unrelated logo files to actually look "the same size" next to
+each other took two fixes in `theme._logo_img_tag`, not one — matching
+just one still left them mismatched:
+- Each logo is embedded as a base64 `<img>` fixed to a set *height* with
+  `width: auto`, rather than `st.image`'s `width="stretch"` (which
+  matches *column* width instead). With two logos of very different
+  source aspect ratios — NEO's is roughly square, Balancer's is a wide
+  wordmark — matching width alone renders them at very different heights.
+- Fixing height on the *raw* files still wasn't enough: NEO's artwork
+  fills nearly its entire canvas, while Balancer's actual glyph sits in a
+  small block surrounded by a wide transparent margin (empirically, only
+  ~17% of that file's canvas height is actual visible content) — scaling
+  the whole padded canvas to a fixed height scales the padding right
+  along with it, so Balancer's logo still looked tiny. `_logo_img_tag`
+  now opens each file with Pillow and crops to `Image.getbbox()` (the
+  bounding box of non-transparent pixels) before embedding, so `height_px`
+  sizes each logo's actual visible mark, not however much blank canvas
+  happens to surround it in the source file.

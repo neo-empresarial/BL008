@@ -108,7 +108,19 @@ manual `basket_id` entry always stays available regardless.
    — it doesn't break with a raw traceback, and the other two platforms
    keep working normally.
 
-4. Run:
+4. In that same `.env`, also set `APP_USERNAME` and `APP_PASSWORD` — the
+   whole app is gated behind this single shared login (see the login
+   screen). Leaving either blank blocks every visitor with a setup
+   message instead of silently letting everyone in. Deploying to
+   Streamlit Community Cloud? Set both in the app's **Secrets** panel
+   instead — no `.env` file gets deployed there.
+
+   The Balancer logo already ships in `public/balancer-logo.png` and shows
+   on the login screen and console header. Optionally, also drop
+   `neo-logo.png` into `public/` to show NEO's logo alongside it — it's
+   skipped (no broken image) if not present.
+
+5. Run:
 
    ```bash
    streamlit run app.py
@@ -204,7 +216,9 @@ BL008/
   public/
     background-noise.png    # page-wide grain texture (ported from reclamm-monorepo)
     granite-1.jpg           # staged for a future per-chart background, unused so far
-    favicon-light.png       # staged for a future page favicon, unused so far
+    favicon-light.png       # browser-tab favicon (Balancer mark, dark variant)
+    balancer-logo.png        # Balancer mark — brands the login screen + header
+    neo-logo.png             # optional — add locally to also brand them, not shipped
   .env.example
   requirements.txt
   README.md

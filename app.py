@@ -37,6 +37,8 @@ visible note that methodologies differ.
 
 from __future__ import annotations
 
+import hmac
+import os
 from datetime import datetime
 from uuid import uuid4
 
@@ -597,11 +599,72 @@ def chart_mode_axis_label(chart_mode: str) -> str:
     return "Accumulated return (%)"
 
 
+def require_login() -> None:
+    """Gates the whole app behind one shared username/password, read from
+    `APP_USERNAME` / `APP_PASSWORD` — `.env` locally (via `load_dotenv()`,
+    same mechanism `GLIDER_API_KEY` already relies on) or this app's
+    Secrets panel if deployed on Streamlit Community Cloud (which exposes
+    secrets as environment variables too, so `os.environ.get` already
+    works in both places — no separate `st.secrets` branch needed). See
+    `.env.example` for the exact keys.
+
+    Renders a centered login form (with `theme.render_login_logos()` above
+    it) and calls `st.stop()` until `st.session_state["authenticated"]` is
+    `True` — nothing below this call in `app.py` ever renders for a
+    logged-out visitor. If the credentials aren't configured at all, the
+    gate fails *closed*: every visitor is blocked with a setup message,
+    never silently let through (same principle as `safe_call` — never do
+    the unsafe thing quietly).
+
+    Credentials are compared with `hmac.compare_digest` rather than `==`
+    to avoid leaking their length/contents through response-time timing,
+    for both the username and the password.
+    """
+    if st.session_state.get("authenticated"):
+        return
+
+    expected_username = os.environ.get("APP_USERNAME", "").strip()
+    expected_password = os.environ.get("APP_PASSWORD", "")
+
+    _, center_col, _ = st.columns([1, 1.4, 1])
+    with center_col:
+        theme.render_login_logos()
+        st.markdown("### Sign in")
+
+        if not expected_username or not expected_password:
+            st.error(
+                "Login isn't configured — set APP_USERNAME and "
+                "APP_PASSWORD in .env (see .env.example) for local runs, "
+                "or in this app's Secrets if it's deployed on Streamlit "
+                "Community Cloud."
+            )
+            st.stop()
+
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in", width="stretch")
+
+        if submitted:
+            username_ok = hmac.compare_digest(username, expected_username)
+            password_ok = hmac.compare_digest(password, expected_password)
+            if username_ok and password_ok:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Incorrect username or password.")
+
+    st.stop()
+
+
 # --- UI ----------------------------------------------------------------
 
 
-st.set_page_config(page_title="Rebalancing Simulator", layout="wide")
+st.set_page_config(
+    page_title="Rebalancing Simulator", layout="wide", page_icon=theme.page_icon()
+)
 theme.inject_css()
+require_login()
 
 with st.sidebar:
     st.header("Control Panel")
