@@ -139,7 +139,12 @@ def inject_css() -> None:
         {_noise_background_css()}
         .block-container {{
             padding-top: 3rem;
-            padding-bottom: 2rem;
+            /* No bottom padding: the footer (render_footer, always the
+            last section) provides its own via `.app-footer`'s padding.
+            Leaving Streamlit's default padding here left a sliver below
+            the footer's colored band, at the very bottom of the page,
+            showing the plain page background/grain through instead. */
+            padding-bottom: 0;
             max-width: 1200px;
         }}
         [data-testid="stSidebar"] {{
@@ -255,9 +260,34 @@ def inject_css() -> None:
         }}
 
         /* Footer (render_footer) — reclamm-style link columns on a
-        level0-dark card, sitting below the app content. */
+        level0-dark card, sitting below the app content. Its background
+        spans the full main content area (sidebar excluded), same as
+        reclamm's own `<Box as="footer">` (full-width) wrapping a
+        max-width-capped `DefaultPageContainer` — see `.footer-top` etc.
+        below for that inner cap. `[data-testid="stMain"]` is what actually
+        has that full width (`.block-container` is capped to 1200px and
+        centered within it); declaring it a CSS containment context lets
+        `.app-footer` size itself against that width via `cqw` container
+        query units, escaping the 1200px cap exactly (not an approximation
+        — no viewport units, so it isn't thrown off by the sidebar's
+        width) — no JS needed (Streamlit strips `<script>` tags from
+        `st.markdown`, confirmed empirically).
+
+        Stops at the sidebar rather than passing under it — Streamlit
+        renders `stMain` as its own independently-scrolling box, and the
+        only ancestor positioned enough to escape past it sits outside
+        that scroll context, so an element sized against it stops
+        following the page's scroll (confirmed empirically: its on-screen
+        position stopped updating while scrolling `stMain`). Full-bleed
+        past the sidebar would need that container's live width, which
+        needs JS — not available here. */
+        [data-testid="stMain"] {{
+            container-type: inline-size;
+        }}
         .app-footer {{
-            margin: 3rem -1rem 0;
+            width: 100cqw;
+            margin-left: calc(50% - 50cqw);
+            margin-top: 3rem;
             padding: 2rem 1rem 1.5rem;
             background-color: {FOOTER_BG};
             border-top: 1px solid {BORDER};
@@ -301,24 +331,59 @@ def inject_css() -> None:
             flex-direction: column;
             gap: 0.45rem;
         }}
+        /* !important throughout this footer link/icon block: Streamlit's
+        own base stylesheet sets a default anchor color (its usual link
+        blue) that otherwise wins the cascade over this injected <style>
+        block regardless of selector specificity — same reason the
+        tab-bar CSS above needs it on stBaseButton-primary. */
         .footer-link {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
             font-size: 0.85rem;
-            color: {TEXT};
-            text-decoration: none;
+            color: {TEXT} !important;
+            text-decoration: none !important;
         }}
         .footer-link:hover {{
-            color: {ACCENT};
+            color: {ACCENT} !important;
+        }}
+        /* The arrow-up-right icon (_ARROW_UP_RIGHT_ICON) after each link
+        label — muted like reclamm's own (`color="grayText"` there). */
+        .footer-link svg {{
+            color: {TEXT_MUTED} !important;
+            flex-shrink: 0;
         }}
         .footer-divider {{
             max-width: 1200px;
             margin: 1.5rem auto 1rem;
             border-top: 1px solid {BORDER};
         }}
-        .footer-bottom {{
+        .footer-bottom-row {{
+            display: flex;
+            align-items: center;
+            gap: 1rem;
             max-width: 1200px;
             margin: 0 auto;
+        }}
+        .footer-bottom {{
             font-size: 0.78rem;
             color: {TEXT_MUTED};
+        }}
+        /* GitHub icon button (_GITHUB_ICON) — a round `background.level2`
+        button, same as reclamm's `SocialLinks` icon buttons. */
+        .footer-social {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            width: 36px;
+            height: 36px;
+            border-radius: 999px;
+            background-color: {SURFACE};
+            color: {TEXT_MUTED} !important;
+        }}
+        .footer-social:hover {{
+            color: {TEXT} !important;
         }}
         </style>
         """,
@@ -326,10 +391,33 @@ def inject_css() -> None:
     )
 
 
+# Inline SVGs ported from reclamm's own footer icon set — `currentColor`
+# so each takes its CSS `color`, no separate fill constant needed.
+# `_ARROW_UP_RIGHT_ICON`: reclamm's Footer marks every external link with
+# this arrow (`react-feather`'s ArrowUpRight, size 12) right after the
+# label; every link here is external, so every one gets it.
+_ARROW_UP_RIGHT_ICON = (
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<line x1="7" y1="17" x2="17" y2="7"></line>'
+    '<polyline points="7 7 17 7 17 17"></polyline>'
+    "</svg>"
+)
+# `_GITHUB_ICON`: reclamm's `GithubIcon` (`icons/social/GithubIcon.tsx`),
+# used the same way reclamm uses it — as a round social-icon button,
+# alongside the disclaimer line, since GitHub is this project's one
+# "social" link (this app has no X/Discord/Medium account to mirror
+# reclamm's other `SocialLinks` entries).
+_GITHUB_ICON = (
+    '<svg width="18" height="18" viewBox="0 0 496 512" fill="currentColor">'
+    '<path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z" />'
+    "</svg>"
+)
+
 # label -> href, grouped under a section title — mirrors the shape of
 # reclamm's own `PROJECT_CONFIG.footer.linkSections` (see
 # `reclamm-monorepo/packages/lib/config/getProjectConfig.ts`), adapted to
-# this project: no social/legal links here, since this app has neither.
+# this project: no legal-page links here, since this app has none.
 FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
     {
         "title": "DTFs On-Chain",
@@ -358,8 +446,10 @@ FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
 
 def render_footer() -> None:
     """Reclamm-style footer: project name/subtitle, link columns
-    (`FOOTER_LINK_SECTIONS`), and a bottom disclaimer line. Call once, at
-    the very end of the page."""
+    (`FOOTER_LINK_SECTIONS`, each entry marked with `_ARROW_UP_RIGHT_ICON`
+    since every link here is external — matching reclamm's own `Footer`),
+    a GitHub icon button (`_GITHUB_ICON`, reclamm's `SocialLinks` pattern),
+    and a bottom disclaimer line. Call once, at the very end of the page."""
     columns_html = "".join(
         f"""
         <div>
@@ -368,7 +458,7 @@ def render_footer() -> None:
                 {"".join(
                     f'<a class="footer-link" href="{link["href"]}" '
                     'target="_blank" rel="noopener noreferrer">'
-                    f'{link["label"]}</a>'
+                    f'{link["label"]}{_ARROW_UP_RIGHT_ICON}</a>'
                     for link in section["links"]
                 )}
             </div>
@@ -390,9 +480,15 @@ def render_footer() -> None:
                 <div class="footer-cols">{columns_html}</div>
             </div>
             <div class="footer-divider"></div>
-            <div class="footer-bottom">
-                Read-only comparison tool — not affiliated with Glider,
-                Reserve, or Balancer.
+            <div class="footer-bottom-row">
+                <a class="footer-social" href="https://github.com/neo-empresarial/BL008"
+                   target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+                    {_GITHUB_ICON}
+                </a>
+                <div class="footer-bottom">
+                    Read-only comparison tool — not affiliated with Glider,
+                    Reserve, or Balancer.
+                </div>
             </div>
         </div>
         """,
