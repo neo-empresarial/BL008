@@ -19,9 +19,11 @@ rebalances (governance, provider API, or an autonomous ML signal) and how
 often. The app is read-only — it never writes to any platform, and it's
 gated behind a single shared login.
 
-![Simulated weight per asset for the Reserve MAG7 basket, as a donut chart](docs/assets/allocation.jpg)
+![Simulated weight per asset for the Mag7 basket, as a donut chart](docs/assets/pizza.png)
 
-![Indexed performance of three Reserve baskets overlaid on one line chart](docs/assets/comparison.jpg)
+![Real vs. HODL vs. adjusted performance for a basket, indexed to 100](docs/assets/performance.png)
+
+![Strategy comparison overlaying two Glider baskets on one indexed-value line chart](docs/assets/strategy-comparison.png)
 
 ## Running it locally
 
