@@ -4,6 +4,8 @@ Streamlit app that compares real on-chain rebalancing behavior across three
 basket platforms — Glider, Reserve Protocol and QuantAMM/Balancer — side by
 side.
 
+![Sign-in screen behind the shared login gate](docs/assets/login.jpg)
+
 ## What it does
 
 Lets you pick a platform and a basket, see its current allocation, and drag
@@ -16,6 +18,10 @@ performance across platforms, alongside who decides each platform's
 rebalances (governance, provider API, or an autonomous ML signal) and how
 often. The app is read-only — it never writes to any platform, and it's
 gated behind a single shared login.
+
+![Simulated weight per asset for the Reserve MAG7 basket, as a donut chart](docs/assets/allocation.jpg)
+
+![Indexed performance of three Reserve baskets overlaid on one line chart](docs/assets/comparison.jpg)
 
 ## Running it locally
 
