@@ -139,7 +139,12 @@ def inject_css() -> None:
         {_noise_background_css()}
         .block-container {{
             padding-top: 3rem;
-            padding-bottom: 2rem;
+            /* No bottom padding: the footer (render_footer, always the
+            last section) provides its own via `.app-footer`'s padding.
+            Leaving Streamlit's default padding here left a sliver below
+            the footer's colored band, at the very bottom of the page,
+            showing the plain page background/grain through instead. */
+            padding-bottom: 0;
             max-width: 1200px;
         }}
         [data-testid="stSidebar"] {{
@@ -266,7 +271,16 @@ def inject_css() -> None:
         query units, escaping the 1200px cap exactly (not an approximation
         — no viewport units, so it isn't thrown off by the sidebar's
         width) — no JS needed (Streamlit strips `<script>` tags from
-        `st.markdown`, confirmed empirically). */
+        `st.markdown`, confirmed empirically).
+
+        Stops at the sidebar rather than passing under it — Streamlit
+        renders `stMain` as its own independently-scrolling box, and the
+        only ancestor positioned enough to escape past it sits outside
+        that scroll context, so an element sized against it stops
+        following the page's scroll (confirmed empirically: its on-screen
+        position stopped updating while scrolling `stMain`). Full-bleed
+        past the sidebar would need that container's live width, which
+        needs JS — not available here. */
         [data-testid="stMain"] {{
             container-type: inline-size;
         }}
