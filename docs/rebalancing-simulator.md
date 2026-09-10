@@ -67,8 +67,13 @@ has a browser-style tab strip for its weight scenarios (see below).
   small arrow-up-right icon, since all of them are external — a GitHub
   icon button, and a bottom disclaimer line. Its background band spans
   the full main content area (not capped at the ~1200px reading width the
-  rest of the page uses) via a CSS container-query trick — see the
-  `.app-footer` CSS comment in `ui/theme.py` for how and why.
+  rest of the page uses, and reaching the true bottom edge of the page —
+  `.block-container` carries no bottom padding of its own, since the
+  footer is always the last section and supplies its own) via a CSS
+  container-query trick, up to the sidebar's edge — going further, under
+  the sidebar itself, breaks the page's scroll-following in Streamlit's
+  layout (confirmed empirically); see the `.app-footer` CSS comment in
+  `ui/theme.py` for the full reasoning.
 
 `.streamlit/config.toml` sets the base dark theme; `ui/theme.py` layers
 app-level CSS — extra top padding so the header isn't clipped under
