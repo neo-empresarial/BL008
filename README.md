@@ -40,6 +40,12 @@ layout to make side-by-side comparison easier.
   weights you adjusted on the sliders. An asset with no historical price
   available is excluded from the simulation and listed as such — never
   invented.
+  - Right below the chart, a **performance summary table** puts a number
+    on that comparison: total return, annualized volatility, and max
+    drawdown for the Real curve, HODL, and every open weight tab —
+    computed independently per series, "—" where a series doesn't have
+    enough history for that metric. Hover a column header for what it
+    measures.
 - Shows TVL when available: per-strategy on Glider, per-basket on Reserve
   (market cap from its official discovery API), and per-pool on QuantAMM —
   all from each platform's own discovery source.

@@ -54,7 +54,8 @@ has a browser-style tab strip for its weight scenarios (see below).
   toggle visually belongs to this chart rather than sitting disconnected at
   the top of the page. A "How to read this chart" expander sits right
   below, explaining the three series (see Rules and behavior). The chart
-  itself follows.
+  itself follows, then a "Performance summary" table with total
+  return/volatility/max drawdown per series (see Rules and behavior).
 - **Strategy comparison** — below Performance; renders only when the
   sidebar multi-select has at least one entry; reuses the same chart-mode
   value.
@@ -350,12 +351,39 @@ weights were fixed for the whole `SIMULATION_DAYS` window. The "How to
 read this chart" expander above the chart states this in user-facing
 language.
 
+**Performance summary table.** Right below the Performance chart, one row
+per series in `df_perf_all` (`compute_series_metrics`) — Total return, an
+annualized Volatility, and Max drawdown — so scenarios can be compared by
+number, not just by eyeballing overlaid lines. Each column header carries
+a `st.column_config.TextColumn(help=...)` tooltip with a one-line
+explanation of that metric, shown on hover:
+
+- **Total return** is just that series' own last `percent_change` value —
+  the same number the chart already plots, read off the end.
+- **Max drawdown** is the worst peak-to-trough drop in the cumulative
+  growth implied by `percent_change` (`1 + percent_change / 100`).
+- **Volatility** is the std. dev. of period-over-period returns on that
+  growth curve, annualized using *that series' own* observed average
+  spacing between points (`365.25 / avg_days_between`) — sources aren't
+  guaranteed to share a cadence (`get_performance`'s `points` are
+  adapter-native), so this is an approximation, not a precise figure;
+  needs at least `MIN_POINTS_FOR_VOLATILITY` (3) points to attempt it.
+
+Every metric is computed independently per series, from that series' own
+points only — same "no cross-series alignment" principle as the comparison
+overlay below. A metric that needs more history than a series has comes
+back `None` and renders as "—", never estimated from insufficient data.
+Because HODL and a reset tab's Adjusted line share the same weights (see
+above), their rows in this table match exactly, not just visually track.
+
 **Chart mode.** `CHART_MODES = ["Indexed value", "Percent return", "Growth
 of $10k"]`. The control (`st.segmented_control` or `st.radio` fallback,
 see Surface) drives both the Performance chart and the comparison overlay
 — both call the same `to_display_series`/`chart_mode_axis_label` helpers
 and share one `chart_mode` value, so switching it updates both charts
-identically.
+identically. The performance summary table is unaffected by it — its
+metrics are always computed from the raw `percent_change` values, not
+whichever display mode the chart is currently in.
 
 **TVL display.** `app.py` first looks up the selected `basket_id` in that
 platform's already-fetched `cached_discover_baskets` rows (`basket_match`)
