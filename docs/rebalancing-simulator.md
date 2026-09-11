@@ -511,6 +511,13 @@ comparison entry) never takes down the rest of the page.
 - **HODL and Adjusted can look identical at reset — that's expected, not a
   bug.** Both use the same real weights and the same simulation path at
   that point; see Rules and behavior for why Real still differs.
+- **HODL/Adjusted only cover the window every included asset has a price
+  for.** `simulate_weighted_performance` forward-fills gaps *within* an
+  asset's own history (weekends, missing days) but never backfills before
+  its first observed price — a basket with one recently-listed asset (e.g.
+  a tokenized stock only indexed by DefiLlama for a few weeks) gets a
+  shorter HODL/Adjusted curve than the requested lookback, not a curve
+  padded with a fabricated flat start.
 - **Reserve weight semantics depend on the source.** Goldsky-backed
   rebalance weights are `weightSpotLimit` normalized by quantity (not USD).
   Weights from `/dtf/rebalance&nonce=` detail are USD-approximate
