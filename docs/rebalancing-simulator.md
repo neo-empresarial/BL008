@@ -202,9 +202,9 @@ string; for Reserve and QuantAMM it always carries a UTC offset, for Glider
 it's whatever the API returns as-is.
 
 Simulated performance points (built by `app.py`'s
-`simulate_weighted_performance`, used for both the HODL and Adjusted
-series) use the same `{"date", "percent_change"}` shape so every series can
-be concatenated into one chart. `app.py`'s `to_display_series` then derives
+`simulate_weighted_performance` for HODL, `simulate_rebalanced_scenario` for
+each Adjusted tab) use the same `{"date", "percent_change"}` shape so every
+series can be concatenated into one chart. `app.py`'s `to_display_series` then derives
 a `display_value` column from `percent_change` depending on the active
 chart mode (`CHART_MODES`):
 
@@ -335,16 +335,47 @@ per asset per `get_current_allocation` call — itself wrapped by `app.py`'s
 (network error, non-2xx, missing symbol) returns `None` and the adapter
 falls back to a truncated address; it never fabricates a symbol.
 
-**Weighted simulation (shared by HODL and Adjusted).** For each asset with
-a `price_ref`, its full daily price history (`SIMULATION_DAYS` = 180 days)
-is fetched, forward/backward filled to align dates across assets, and
-normalized so day 0 = 1.0. The simulated index is the weight-averaged sum
-of the normalized series, using weights renormalized **only across the
-included assets** (i.e. an asset with no price data doesn't just get a 0
-weight — its weight is redistributed to the rest). If zero assets have a
-usable price, simulation is skipped entirely for that series (no chart
-series is added; for Adjusted, a caption explains why — HODL fails silently
-since it's a secondary series).
+**Weighted simulation, shared price loading.** `_load_price_series` fetches
+each asset's full daily price history (`SIMULATION_DAYS` = 180 days) via
+`price_ref` and returns it as a date-indexed series per asset, plus the
+list of assets with no `price_ref` or no DefiLlama history (never
+invented). Both HODL and Adjusted build on this:
+
+- **HODL** (`simulate_weighted_performance`) forward-fills each asset's own
+  gaps, then keeps only the dates where *every* included asset has a price
+  (`dropna(how="any")` — no backfill, so a shorter-history asset trims the
+  window instead of getting a fabricated flat start) and computes one
+  weight-averaged index over that whole window — one fixed weight vector,
+  buy-and-hold. Weights are renormalized **only across the included
+  assets** (an asset with no price data doesn't get a 0 weight — its share
+  is redistributed to the rest). If zero assets have a usable price,
+  simulation is skipped entirely (no chart series added).
+- **Adjusted** (`simulate_rebalanced_scenario`) instead re-weights at every
+  real historical rebalance — see below.
+
+**Adjusted = the tab's tilt, re-applied at every real rebalance.**
+`simulate_rebalanced_scenario(scenario_assets, current_assets, rebalance_history)`
+treats a tab's sliders as a **tilt** on the basket's current real weights
+(`scenario_weight / current_weight`, per asset — an asset at 0% currently
+keeps a tilt of 1.0, i.e. untilted, since a ratio against zero is
+undefined). It applies that same tilt to every past rebalance's real
+`weights_after` (renormalized back to 100%), building a schedule of
+`(date, weights)` ascending in time; the final segment, from the latest
+rebalance to today, uses the scenario's own weights directly (which is
+exactly the tilt applied to the current weights — self-consistent with the
+schedule). Prices are forward-filled per asset (never backfilled, same
+principle as HODL) across the union of assets appearing in the scenario,
+the current allocation, or any historical snapshot.
+
+The simulated index is built **segment by segment**: within a segment, the
+weighted index is normalized to 1.0 at that segment's first date (assets
+missing a price there are excluded and the rest renormalized, same as
+HODL); across segments, each new segment's index is chained onto the
+running value carried over from the previous segment's last point — so a
+rebalance mid-window changes the mix from that date on without resetting
+the cumulative return to zero. A basket with **no** rebalance history yet
+has nothing to schedule against, so `simulate_rebalanced_scenario` falls
+back to plain `simulate_weighted_performance` (buy-and-hold) for that tab.
 
 **Performance chart series.** Two fixed series plus one Adjusted series
 per open weight-scenario tab are plotted together, built independently and
@@ -354,30 +385,26 @@ only added when data is available:
 |---|---|---|
 | `SERIES_REAL` = "Real strategy (with rebalancing)" | `get_performance` — the platform's own method/source | No — platform data |
 | `SERIES_HODL` = "HODL (real weights, no rebalancing)" | `simulate_weighted_performance` over `real_weights` (the basket's actual current weights, from `get_current_allocation`) | No — always the real weights |
-| `adjusted_series_label(scenario["label"])` = "Adjusted buy-and-hold ({tab name})", one per tab | `simulate_weighted_performance` over that tab's committed weights (`scenario_edited_weights[scenario["id"]]`) | Yes — that tab's sliders only |
+| `adjusted_series_label(scenario["label"])` = "Adjusted (rebalanced) ({tab name})", one per tab | `simulate_rebalanced_scenario` over that tab's committed weights, `real_weights`, and `cached_get_rebalance_history` for the current basket | Yes — that tab's sliders set the tilt |
 
 `app.py` loops every scenario in the tab list and reads its committed
 weights back from `st.session_state["prev_w::{platform}::{basket_id}::{scenario_id}"]`
 (falling back to `real_weights` for a tab that was added but never
-rendered/edited yet), then calls `simulate_weighted_performance` once per
+rendered/edited yet), then calls `simulate_rebalanced_scenario` once per
 tab — so adding a tab adds one more Adjusted line to the chart rather than
 replacing the existing one, and a tab that isn't the active one this run
 still contributes its line (see Weight scenario tabs above). This is what
 makes tab-to-tab comparison possible. Excluded assets are unioned across
-every tab's simulation into a single caption (exclusion depends only on
-price availability, not on a tab's weights, so in practice every tab
-excludes the same assets).
+every tab's simulation into a single caption.
 
-With a tab's sliders at their real/reset values, HODL and that tab's
-Adjusted line use the same weights and should track closely (not
-necessarily identically — HODL and Adjusted are computed independently,
-and each can silently exclude a different asset only if their weight sets
-differ, which they don't at reset — in practice they match). Real can
-differ from both even then, because Real reflects whatever rebalancing the
-platform actually performed over time, while HODL/Adjusted assume the
-weights were fixed for the whole `SIMULATION_DAYS` window. The "How to
-read this chart" expander above the chart states this in user-facing
-language.
+With a tab's sliders at their real/reset values (tilt of 1.0 everywhere),
+its Adjusted line applies the basket's own real historical weights at
+each real rebalance — the same schedule Real is built from, just computed
+from the underlying assets' prices instead of the platform's own
+performance source — so it tracks **Real** closely at reset, not HODL.
+HODL stays the fixed-weight benchmark: "what if the basket's current
+weights had never changed for the whole window." The "How to read this
+chart" expander above the chart states this in user-facing language.
 
 **Performance summary table.** Right below the Performance chart, one row
 per series in `df_perf_all` (`compute_series_metrics`) — Total return, an
@@ -401,8 +428,9 @@ Every metric is computed independently per series, from that series' own
 points only — same "no cross-series alignment" principle as the comparison
 overlay below. A metric that needs more history than a series has comes
 back `None` and renders as "—", never estimated from insufficient data.
-Because HODL and a reset tab's Adjusted line share the same weights (see
-above), their rows in this table match exactly, not just visually track.
+A reset tab's Adjusted row tracks **Real**'s row closely (see above), not
+HODL's — they're built from the same real weight schedule, just priced
+differently (underlying assets vs. the platform's own performance source).
 
 **Chart mode.** `CHART_MODES = ["Indexed value", "Percent return", "Growth
 of $10k"]`. The control (`st.segmented_control` or `st.radio` fallback,
@@ -479,13 +507,15 @@ comparison entry) never takes down the rest of the page.
 - No date alignment across comparison-overlay series — each strategy's
   points are plotted on its own native date range; overlapping ranges are
   a coincidence of the underlying data, not something the app enforces.
-- No true historical "what the basket actually held on day X" for HODL —
-  it assumes the *current* real weights held constant for the whole
-  simulation window, not the weights that were actually in place on each
-  past date.
-- Historical price gaps are filled (`ffill`/`bfill`) for chart continuity,
-  but no price is ever fabricated for an asset that has zero price history
-  — that asset is excluded from the simulation, not interpolated into it.
+- No true historical "what the basket actually held on day X" for **HODL**
+  specifically — it assumes the *current* real weights held constant for
+  the whole simulation window. Adjusted does use each rebalance's real
+  historical weights (tilted), via `simulate_rebalanced_scenario`.
+- Historical price gaps are forward-filled (`ffill`) for chart continuity
+  *within* an asset's own history, but never backfilled before its first
+  observed price, and no price is ever fabricated for an asset that has
+  zero price history — that asset is excluded from the simulation, not
+  interpolated into it.
 
 ## Gotchas
 
@@ -508,16 +538,20 @@ comparison entry) never takes down the rest of the page.
   `EIP155_TO_DEFILLAMA`/`CHAIN_TO_DEFILLAMA`) or DefiLlama has no price for
   that exact address. Fix: none from the UI — this is a data-availability
   limit, not a bug.
-- **HODL and Adjusted can look identical at reset — that's expected, not a
-  bug.** Both use the same real weights and the same simulation path at
-  that point; see Rules and behavior for why Real still differs.
+- **A reset tab's Adjusted line tracks Real, not HODL — that's expected,
+  not a bug.** At tilt 1.0, Adjusted replays the basket's own real weight
+  schedule (same as Real), just priced from the underlying assets instead
+  of the platform's performance source; HODL never rebalances, so it's the
+  one that's expected to diverge. See Rules and behavior.
 - **HODL/Adjusted only cover the window every included asset has a price
-  for.** `simulate_weighted_performance` forward-fills gaps *within* an
-  asset's own history (weekends, missing days) but never backfills before
-  its first observed price — a basket with one recently-listed asset (e.g.
-  a tokenized stock only indexed by DefiLlama for a few weeks) gets a
-  shorter HODL/Adjusted curve than the requested lookback, not a curve
-  padded with a fabricated flat start.
+  for.** Both forward-fill gaps *within* an asset's own history (weekends,
+  missing days) but never backfill before its first observed price — a
+  basket with one recently-listed asset (e.g. a tokenized stock only
+  indexed by DefiLlama for a few weeks) gets a shorter curve than the
+  requested lookback, not one padded with a fabricated flat start. For
+  Adjusted this applies per segment: a rebalance segment can be shorter
+  still if an asset newly added at that rebalance has even less price
+  history than the basket as a whole.
 - **Reserve weight semantics depend on the source.** Goldsky-backed
   rebalance weights are `weightSpotLimit` normalized by quantity (not USD).
   Weights from `/dtf/rebalance&nonce=` detail are USD-approximate
