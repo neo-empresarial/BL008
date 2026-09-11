@@ -67,7 +67,7 @@ def adjusted_series_label(scenario_label: str) -> str:
     gets its own line on the shared performance chart (see
     `render_scenario_editor`), named after that tab so several what-if
     allocations can be told apart when compared."""
-    return f"Adjusted buy-and-hold ({scenario_label})"
+    return f"Adjusted (rebalanced) ({scenario_label})"
 
 PLATFORMS = {
     "Glider": glider,
@@ -185,22 +185,19 @@ def estimate_monthly_frequency(history: list[dict]) -> float | None:
     return len(dates) / (span_days / 30.0)
 
 
-def simulate_weighted_performance(
-    weighted_assets: list[dict], days: int = SIMULATION_DAYS
-) -> tuple[list[dict] | None, list[str]]:
-    """Recombines each asset's historical return (via price_ref) using the
-    weights adjusted on the sliders. Each item: {"asset", "weight_pct", "price_ref"}.
-
-    Assets with no price_ref, or with no historical price available on
-    DefiLlama, are excluded (never simulated/invented) — the remaining
-    assets' weights are renormalized among themselves so the sum stays at
-    100%. Returns (points, excluded); points is None if no asset had a
-    price available.
+def _load_price_series(
+    items: list[dict], days: int
+) -> tuple[dict[str, pd.Series], list[str]]:
+    """Fetches each item's historical price (via price_ref) as a
+    date-indexed pd.Series. Items with no price_ref, or with no historical
+    price available on DefiLlama, are reported in `excluded` instead of
+    being invented. Never fills a gap before an asset's own first price —
+    callers must not backfill across that boundary either.
     """
     series: dict[str, pd.Series] = {}
     excluded: list[str] = []
 
-    for item in weighted_assets:
+    for item in items:
         price_ref = item.get("price_ref")
         if not price_ref:
             excluded.append(item["asset"])
@@ -213,6 +210,24 @@ def simulate_weighted_performance(
         df = pd.DataFrame(raw)
         df["date"] = pd.to_datetime(df["timestamp"], unit="s").dt.floor("D")
         series[item["asset"]] = df.groupby("date")["price"].last()
+
+    return series, excluded
+
+
+def simulate_weighted_performance(
+    weighted_assets: list[dict], days: int = SIMULATION_DAYS
+) -> tuple[list[dict] | None, list[str]]:
+    """Recombines each asset's historical return (via price_ref) using the
+    weights adjusted on the sliders — one fixed weight vector held for the
+    whole window (buy-and-hold). Each item: {"asset", "weight_pct", "price_ref"}.
+
+    Assets with no price_ref, or with no historical price available on
+    DefiLlama, are excluded (never simulated/invented) — the remaining
+    assets' weights are renormalized among themselves so the sum stays at
+    100%. Returns (points, excluded); points is None if no asset had a
+    price available.
+    """
+    series, excluded = _load_price_series(weighted_assets, days)
 
     included = [item for item in weighted_assets if item["asset"] in series]
     total_weight = sum(item["weight_pct"] for item in included)
@@ -235,6 +250,114 @@ def simulate_weighted_performance(
     points = [
         {"date": date.isoformat(), "percent_change": ((value / base) - 1) * 100.0}
         for date, value in weighted_index.items()
+    ]
+    return points, excluded
+
+
+def simulate_rebalanced_scenario(
+    scenario_assets: list[dict],
+    current_assets: list[dict],
+    rebalance_history: list[dict],
+    days: int = SIMULATION_DAYS,
+) -> tuple[list[dict] | None, list[str]]:
+    """Like `simulate_weighted_performance`, but re-weights at every real
+    historical rebalance instead of holding one vector for the whole window.
+
+    The scenario's sliders express a **tilt** relative to the basket's
+    current real weights (`scenario_weight / current_weight` per asset).
+    That same tilt is applied to each past rebalance's real `weights_after`
+    (renormalized to 100%), so the simulation asks "what if I'd always held
+    this tilt, rebalanced on the same real schedule" rather than "what if
+    I'd held today's tilted weights since day one". The final segment (from
+    the latest rebalance to today) uses the scenario's weights directly,
+    which is exactly the tilt applied to the current weights.
+
+    Assets are matched by name across periods; one with a since-changed
+    price_ref or that never appears in `scenario_assets`/`current_assets`
+    keeps a tilt of 1.0 (its own real weight, untilted) for periods where
+    it's part of the basket but the tab has no opinion on it.
+
+    Falls back to `simulate_weighted_performance` (plain buy-and-hold) when
+    there's no rebalance history to schedule against.
+    """
+    if not rebalance_history:
+        return simulate_weighted_performance(scenario_assets, days)
+
+    by_asset: dict[str, dict] = {item["asset"]: item for item in current_assets}
+    for item in scenario_assets:
+        by_asset.setdefault(item["asset"], item)
+    for event in rebalance_history:
+        for item in event.get("weights_after") or []:
+            by_asset.setdefault(item["asset"], item)
+
+    series, excluded = _load_price_series(list(by_asset.values()), days)
+    if not series:
+        return None, excluded
+
+    combined = pd.DataFrame(series).sort_index().ffill()
+
+    current_by_asset = {item["asset"]: item["weight_pct"] for item in current_assets}
+    scenario_by_asset = {item["asset"]: item["weight_pct"] for item in scenario_assets}
+    tilt = {
+        asset: scenario_by_asset[asset] / current_by_asset[asset]
+        for asset in scenario_by_asset
+        if current_by_asset.get(asset, 0) > 0
+    }
+
+    schedule: dict[pd.Timestamp, dict[str, float]] = {}
+    for event in rebalance_history:
+        weights_after = event.get("weights_after") or []
+        if not weights_after or not event.get("date"):
+            continue
+        tilted = {w["asset"]: w["weight_pct"] * tilt.get(w["asset"], 1.0) for w in weights_after}
+        total = sum(tilted.values())
+        if total <= 0:
+            continue
+        date = pd.Timestamp(event["date"]).tz_localize(None).floor("D")
+        schedule[date] = {asset: value / total * 100.0 for asset, value in tilted.items()}
+    schedule[combined.index.max()] = dict(scenario_by_asset)
+
+    ordered_schedule = sorted(
+        (date, weights) for date, weights in schedule.items() if date >= combined.index.min()
+    )
+    if not ordered_schedule:
+        ordered_schedule = [(combined.index.min(), dict(scenario_by_asset))]
+
+    global_value = pd.Series(index=combined.index, dtype=float)
+    running_base = 1.0
+    for i, (start, weights) in enumerate(ordered_schedule):
+        end = ordered_schedule[i + 1][0] if i + 1 < len(ordered_schedule) else None
+        mask = (combined.index >= start) & (combined.index < end if end is not None else True)
+        segment_dates = combined.index[mask]
+        if len(segment_dates) == 0:
+            continue
+
+        segment = combined.loc[segment_dates]
+        base_row = segment.iloc[0]
+        active = {
+            asset: weight
+            for asset, weight in weights.items()
+            if weight > 0 and asset in base_row.index and pd.notna(base_row[asset])
+        }
+        total_active = sum(active.values())
+        if total_active <= 0:
+            global_value.loc[segment_dates] = running_base
+            continue
+
+        norm_weights = pd.Series({asset: value / total_active for asset, value in active.items()})
+        segment_norm = segment[norm_weights.index].divide(segment[norm_weights.index].iloc[0])
+        local_index = (segment_norm * norm_weights).sum(axis=1)
+        global_value.loc[segment_dates] = running_base * local_index
+        running_base = global_value.loc[segment_dates].iloc[-1]
+
+    global_value = global_value.dropna()
+    if global_value.empty:
+        return None, excluded
+    base = global_value.iloc[0]
+
+    points = [
+        {"date": date.isoformat(), "percent_change": ((value / base) - 1) * 100.0}
+        for date, value in global_value.items()
     ]
     return points, excluded
 
@@ -825,16 +948,20 @@ with st.expander("How to read this chart"):
         f"**{SERIES_REAL}** comes straight from the platform's own performance "
         "source (see adapter) — it reflects whatever rebalancing actually "
         f"happened on-chain/in the strategy. **{SERIES_HODL}** and every "
-        "**Adjusted buy-and-hold (…)** line are computed here by recombining "
+        "**Adjusted (rebalanced) (…)** line are computed here by recombining "
         "each asset's individual historical price (via DefiLlama) — never "
         "taken from the platform — so an asset with no available price "
         "history is excluded from all of them, listed as such, never "
-        "invented. HODL always uses the basket's real current weights, "
-        "static, regardless of any tab's sliders. Each Adjusted line reflects "
-        "one weight-scenario tab's sliders — open more tabs (the ＋ above) "
-        "to compare several what-if allocations on this same chart. With a "
-        "tab's sliders at their real/reset values, its Adjusted "
-        "line and HODL use the same weights and should track closely — small "
+        "invented. HODL holds the basket's real current weights fixed for "
+        "the whole window (never rebalances), regardless of any tab's "
+        "sliders. Each Adjusted line instead re-weights at every real "
+        "historical rebalance: your tab's sliders express a tilt versus the "
+        "current real weights (e.g. 2x NVDA), and that same tilt is applied "
+        "to the basket's real weights at each past rebalance — open more "
+        "tabs (the ＋ above) to compare several what-if tilts on this same "
+        "chart. With a tab's sliders at their real/reset values (tilt of "
+        "1x everywhere), its Adjusted line applies the basket's own real "
+        "historical weights and should track **Real** closely — small "
         "differences can still appear from excluded assets or data timing."
     )
 
@@ -863,6 +990,14 @@ if real_weights:
         perf_frames.append(df_hodl)
 
 if scenario_edited_weights:
+    scenario_history, _scenario_history_error = safe_call(
+        cached_get_rebalance_history, platform_name, basket_id
+    )
+    current_assets = [
+        {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
+        for asset, weight in real_weights.items()
+    ]
+
     any_scenario_simulated = False
     all_excluded: set[str] = set()
     for scenario in scenarios:
@@ -873,7 +1008,9 @@ if scenario_edited_weights:
             {"asset": asset, "weight_pct": weight, "price_ref": price_refs.get(asset)}
             for asset, weight in weights.items()
         ]
-        sim_points, excluded = simulate_weighted_performance(weighted_assets)
+        sim_points, excluded = simulate_rebalanced_scenario(
+            weighted_assets, current_assets, scenario_history or []
+        )
         all_excluded.update(excluded)
         if sim_points:
             any_scenario_simulated = True
