@@ -219,7 +219,13 @@ def simulate_weighted_performance(
     if not included or total_weight <= 0:
         return None, excluded
 
-    combined = pd.DataFrame(series).sort_index().ffill().bfill()
+    # ffill only within each asset's own history (weekends/gaps); dropna then
+    # trims the leading rows where a shorter-history asset has none yet — no
+    # bfill, which would smear its first known price backward and fabricate
+    # a baseline the simulation never actually observed.
+    combined = pd.DataFrame(series).sort_index().ffill().dropna(how="any")
+    if combined.empty:
+        return None, excluded
     normalized = combined / combined.iloc[0]
 
     weights = pd.Series({item["asset"]: item["weight_pct"] / total_weight for item in included})
