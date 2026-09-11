@@ -242,7 +242,7 @@ Per-adapter discovery source and scope:
 | Adapter | Source | Scope |
 |---|---|---|
 | `glider.discover_baskets` | `discover_strategies(collection="curated")`, default page size (the API rejects `limit` above 50 — confirmed empirically) | Curated collection only; no broader collection is documented |
-| `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example. Allocation/history use `GET /dtf/rebalance` (Goldsky weights by nonce; discover `basket` fallback); performance uses DefiLlama then `GET /historical/dtf` |
+| `reserve.discover_baskets` | Reserve's official discovery API, `GET /discover/dtfs` (single call, no pagination) | **Active Index DTFs only** — rows are filtered to `type == "index"` and `status == "active"`, and to chain ids `{1, 8453, 56}` (mainnet/base/bsc); Yield DTFs (e.g. eUSD) never appear here even though one is pinned as an example. Allocation/history use `GET /dtf/rebalance` (Goldsky weights by nonce; discover `basket` fallback); performance uses whichever of DefiLlama or `GET /historical/dtf` has more points |
 | `quantamm.discover_baskets` | Balancer `poolGetPools` (`poolTypeIn: [QUANT_AMM_WEIGHTED]`, `protocolVersionIn: [3]`, `tagNotIn: [EXCLUDED_POOL_TAG]`), paginated with `skip`, across every chain in `CHAIN_TO_DEFILLAMA` | **Excludes `BLACK_LISTED` pools** — QuantAMM has no curated discovery API, but Balancer itself tags test pools and duplicate deployments (e.g. a second Safe Haven) `BLACK_LISTED`; excluding that tag server-side currently leaves Safe Haven, Base Macro and Sonic Macro |
 
 The comparison multi-select in the sidebar calls `build_basket_options` for
@@ -518,8 +518,11 @@ comparison entry) never takes down the rest of the page.
   from `basket[].weight`. Two quantity-normalized rows with the same ratio
   can still imply different USD allocations.
 - **Reserve performance may come from DefiLlama or `/historical/dtf`.**
-  DefiLlama is tried first; young or thinly listed DTF tokens often only
-  resolve via the Reserve historical price series.
+  Both are fetched and the series with more points wins — DefiLlama can
+  return a handful of points for a DTF its indexer only recently caught up
+  on (e.g. a token a few weeks old), while `/historical/dtf` already has
+  its full lookback window; in that case Reserve's own series is used
+  instead, even though DefiLlama did return something.
 - **QuantAMM's rebalance history is filtered, not raw.** Only snapshots
   where the largest weight shift exceeds `MIN_WEIGHT_SHIFT_PCT` (1.0
   percentage point) become a row. The pool's underlying weight curve is
