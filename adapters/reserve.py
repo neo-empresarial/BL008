@@ -21,15 +21,16 @@ Data sources (public, no API key):
    - `GET /dtf/rebalance` for the rebalance event list (same path the
      official CLI/`fetchRebalanceHistory` use); optional `&nonce=N` for
      detail when Goldsky has no `weightSpotLimit` for that nonce.
-   - `GET /historical/dtf` for a NAV-style price series when DefiLlama has
-     no chart for the DTF token.
+   - `GET /historical/dtf` for a NAV-style price series, compared against
+     DefiLlama's chart to pick whichever has more points (see
+     `get_performance`).
 
 2. Goldsky Index DTF subgraphs (The Graph-compatible), one per chain —
    used as a best-effort weight source (`weightSpotLimit`) and as a
    fallback event list if the Reserve API returns no rebalances. Endpoints:
    `https://api.goldsky.com/api/public/project_cmgzim3e100095np2gjnbh6ry/subgraphs/dtf-index-{mainnet,base,bsc}/prod/gn`.
 
-3. DefiLlama (`coins.llama.fi/chart`) — primary performance proxy via the
+3. DefiLlama (`coins.llama.fi/chart`) — performance proxy via the
    DTF token's market price.
 
 - **Yield DTFs** (e.g. eUSD) are not in the Index discovery catalog and have
@@ -546,28 +547,36 @@ def _performance_from_reserve_historical(
 
 
 def get_performance(basket_id: str) -> dict[str, Any]:
-    """Approximate performance via DTF token price (DefiLlama, then Reserve).
+    """Approximate performance via DTF token price (richer of DefiLlama/Reserve).
 
-    Prefer DefiLlama's chart; if missing, use `GET /historical/dtf` price
-    points. Both are NAV-style proxies, not formal TWR/MWR.
+    Both are NAV-style proxies, not formal TWR/MWR. A DTF too young for
+    DefiLlama's indexer to have caught up on can still return a handful of
+    points there, which would starve the chart if DefiLlama won by default —
+    so we fetch both and keep whichever series has more points, not just
+    whichever responds first.
     """
     chain_key, address = _parse_basket_id(basket_id)
 
-    points = _performance_from_defillama(chain_key, address)
-    if points:
-        return {"method": "Token price (NAV proxy, via DefiLlama)", "points": points}
+    candidates: list[tuple[str, list[dict[str, Any]]]] = []
 
-    points = _performance_from_reserve_historical(chain_key, address)
-    if points:
-        return {
-            "method": "Token price (NAV proxy, via Reserve historical API)",
-            "points": points,
-        }
+    defillama_points = _performance_from_defillama(chain_key, address)
+    if defillama_points:
+        candidates.append(("Token price (NAV proxy, via DefiLlama)", defillama_points))
 
-    raise ReserveAPIError(
-        "No historical price available for this DTF from DefiLlama or the "
-        "Reserve historical API — no performance data."
-    )
+    reserve_points = _performance_from_reserve_historical(chain_key, address)
+    if reserve_points:
+        candidates.append(
+            ("Token price (NAV proxy, via Reserve historical API)", reserve_points)
+        )
+
+    if not candidates:
+        raise ReserveAPIError(
+            "No historical price available for this DTF from DefiLlama or the "
+            "Reserve historical API — no performance data."
+        )
+
+    method, points = max(candidates, key=lambda candidate: len(candidate[1]))
+    return {"method": method, "points": points}
 
 
 def get_tvl_usd_defillama() -> float | None:
