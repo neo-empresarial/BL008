@@ -699,7 +699,7 @@ if not basket_id:
     st.warning("Choose an example or enter a basket_id in the sidebar.")
     st.stop()
 
-theme.render_header("REBALANCING CONSOLE", platform_name, basket_id)
+theme.render_header("Pool Settings", platform_name, basket_id)
 
 # Per-basket TVL, when available, comes from the same discover_baskets()
 # rows the sidebar already fetched (cached) — QuantAMM has real per-pool
