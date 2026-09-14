@@ -136,12 +136,17 @@ def apply_chart_theme(fig):
 
 
 def inject_css() -> None:
-    """Injects app-level CSS: readable sans-serif typography, extra top
-    padding so the header isn't clipped under Streamlit's toolbar, rounded
-    card-like chart/table surfaces (with `overflow: hidden` so the rounded
-    corners actually clip the chart's own background), address/link
-    styling, the page-wide grain texture (see `_noise_background_css`), and
-    the footer (see `render_footer`) — on top of the base theme from
+    """Injects app-level CSS: readable sans-serif typography, Streamlit's
+    own Deploy button and "⋮" main menu hidden (this app has its own logo
+    navbar — see `render_header`/`render_login_logos` — so they're just
+    redundant chrome, not a functional loss; the header *element* itself
+    stays, just transparent, because it also hosts `stExpandSidebarButton`
+    — the only way to bring a collapsed sidebar back, so it can never be
+    display:none'd wholesale), rounded card-like chart/table surfaces
+    (with `overflow: hidden` so the rounded corners actually clip the
+    chart's own background), address/link styling, the page-wide grain
+    texture (see `_noise_background_css`), and the footer (see
+    `render_footer`) — on top of the base theme from
     `.streamlit/config.toml`. Call once, right after `st.set_page_config`."""
     st.markdown(
         f"""
@@ -150,8 +155,18 @@ def inject_css() -> None:
             font-family: {FONT_FAMILY};
         }}
         {_noise_background_css()}
+        [data-testid="stHeader"] {{
+            background: transparent;
+            height: auto;
+        }}
+        [data-testid="stAppDeployButton"], [data-testid="stMainMenu"] {{
+            display: none;
+        }}
         .block-container {{
-            padding-top: 3rem;
+            /* Streamlit's header is transparent/chrome-free above, not
+            hidden outright (see stHeader), so this only needs normal
+            breathing room — not clearance for a solid toolbar bar. */
+            padding-top: 1.5rem;
             /* No bottom padding: the footer (render_footer, always the
             last section) provides its own via `.app-footer`'s padding.
             Leaving Streamlit's default padding here left a sliver below
@@ -210,8 +225,11 @@ def inject_css() -> None:
             border-bottom: 1px solid {BORDER};
         }}
         .console-title {{
-            font-size: 1.25rem;
-            font-weight: 700;
+            /* Matches Streamlit's own st.subheader (h3) sizing, e.g.
+            "Allocation"/"Performance" below — same visual weight as every
+            other section title on the page, not a one-off larger title. */
+            font-size: 1.75rem;
+            font-weight: 600;
             color: {TEXT};
         }}
         .console-meta {{
@@ -486,10 +504,20 @@ FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
 ]
 
 
+# Each logo links out to that project's own site — filename -> href, used
+# by `_logo_img_tag` to wrap the <img> in an <a> when a mapping exists.
+LOGO_LINKS: dict[str, str] = {
+    "balancer-logo.png": "https://balancer.fi",
+    "neo-logo.png": "https://neo.certi.org.br",
+}
+
+
 def _logo_img_tag(path: Path, height_px: int) -> str:
     """One base64-embedded <img> tag for a logo file, cropped to its
     visible (non-transparent) content and fixed to `height_px` with
-    `width: auto`.
+    `width: auto`. Wrapped in a link to `LOGO_LINKS[path.name]` when that
+    file has one, opening in a new tab — a logo with no mapping (e.g. a
+    future third partner) still renders, just unlinked.
 
     Two problems, two fixes, both needed — matching just one still left
     the logos looking mismatched:
@@ -515,10 +543,14 @@ def _logo_img_tag(path: Path, height_px: int) -> str:
         buf = io.BytesIO()
         cropped.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return (
+    img = (
         f'<img src="data:image/png;base64,{b64}" alt="{path.stem}" '
         f'style="height:{height_px}px;width:auto;object-fit:contain;" />'
     )
+    href = LOGO_LINKS.get(path.name)
+    if not href:
+        return img
+    return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{img}</a>'
 
 
 def _logos_html(height_px: int, justify: str, margin_bottom_rem: float) -> str:
@@ -604,7 +636,7 @@ def render_header(title: str, platform_name: str, basket_id: str) -> None:
     """NEO/Balancer logos (small, left-aligned — see `_logos_html`; skipped
     if neither file is present) above the compact header: product name,
     platform badge, basket id."""
-    logos_html = _logos_html(height_px=28, justify="flex-start", margin_bottom_rem=0.5)
+    logos_html = _logos_html(height_px=40, justify="flex-start", margin_bottom_rem=0.75)
     st.markdown(
         f"""
         {logos_html}
