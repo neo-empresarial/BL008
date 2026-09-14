@@ -107,6 +107,7 @@ DEFILLAMA_TO_EXPLORER = {
     "avax": "https://snowtrace.io/token/{address}",
     "linea": "https://lineascan.build/token/{address}",
     "blast": "https://blastscan.io/token/{address}",
+    "sonic": "https://sonicscan.org/token/{address}",
 }
 
 

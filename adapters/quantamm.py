@@ -10,6 +10,11 @@ adapters/reserve.py — all return exactly these shapes):
     "weights_after": list[{"asset","weight_pct"}] | None}]
 - get_performance(basket_id) -> {"method": str, "points": [{"date", "percent_change"}]}
 - discover_baskets() -> list[{"basket_id", "name", "tvl_usd", "chain"}]
+- basket_platform_url(basket_id) -> str | None — this basket's page on the
+    platform's own site
+- basket_explorer_url(basket_id) -> str | None — block explorer page for the
+    basket's own contract address (None where basket_id isn't an address,
+    e.g. Glider)
 
 No function here uses Streamlit — caching is the caller's responsibility (see
 app.py, `st.cache_data`).
@@ -379,3 +384,28 @@ def get_tvl_usd_defillama() -> float | None:
         return float(response.json())
     except (requests.RequestException, ValueError, TypeError):
         return None
+
+
+def basket_platform_url(basket_id: str) -> str | None:
+    """Link to this pool's own page on balancer.fi — confirmed live as
+    `balancer.fi/pools/{chain}/v3/{address}`, where {chain} is
+    CHAIN_TO_DEFILLAMA's slug (same one used for pricing/explorer links).
+    None on an unparseable basket_id or unsupported chain."""
+    try:
+        chain, address = _parse_basket_id(basket_id)
+    except QuantAMMAPIError:
+        return None
+    slug = CHAIN_TO_DEFILLAMA.get(chain)
+    return f"https://balancer.fi/pools/{slug}/v3/{address}" if slug else None
+
+
+def basket_explorer_url(basket_id: str) -> str | None:
+    """Block explorer link for the pool token contract itself — same
+    "<chain>:<address>" shape as any other price_ref, so this just reuses
+    `pricing.price_ref_to_explorer_url`."""
+    try:
+        chain, address = _parse_basket_id(basket_id)
+    except QuantAMMAPIError:
+        return None
+    slug = CHAIN_TO_DEFILLAMA.get(chain)
+    return pricing.price_ref_to_explorer_url(f"{slug}:{address}") if slug else None
