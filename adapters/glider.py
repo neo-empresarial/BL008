@@ -15,6 +15,10 @@ side):
 - discover_baskets() -> list[dict]
     each item: {"basket_id", "name", "tvl_usd", "chain"} — shared shape with
     reserve.py/quantamm.py's own discover_baskets, thin wrapper over the above
+- basket_platform_url(basket_id) -> str | None — this strategy's page on
+    glider.fi
+- basket_explorer_url(basket_id) -> str | None — always None, a Glider
+    strategy_id is an opaque ULID, not an on-chain address
 
 All functions raise GliderAPIError with a readable message on failure
 (network, HTTP, or {"success": false, ...} envelope). No function here uses
@@ -384,3 +388,17 @@ def get_rebalance_history(strategy_id: str) -> list[dict[str, Any]]:
             }
         )
     return history
+
+
+def basket_platform_url(basket_id: str) -> str | None:
+    """Link to this strategy's own page on glider.fi — confirmed live
+    (glider.fi/strategy/{id}, not app.glider.fi, which doesn't resolve).
+    """
+    return f"https://glider.fi/strategy/{basket_id}"
+
+
+def basket_explorer_url(basket_id: str) -> str | None:
+    """Always None — a Glider strategy_id is an opaque ULID, not an
+    on-chain address, so there's no block explorer page for it (unlike
+    Reserve/QuantAMM, where basket_id IS the DTF/pool contract address)."""
+    return None

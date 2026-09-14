@@ -49,7 +49,10 @@ has a browser-style tab strip for its weight scenarios (see below).
 - **Header** — NEO/Balancer logos (40px, when present, each linking out
   to that project's site) above a compact console header: title ("Pool
   Settings", sized to match every other section's `st.subheader`),
-  platform badge, basket id. Streamlit's own Deploy button and "⋮" main
+  platform badge (links to this basket's page on the platform's own
+  site, `basket_platform_url`), basket id (links to a block explorer,
+  `basket_explorer_url` — plain text for Glider, whose basket ids aren't
+  addresses). Streamlit's own Deploy button and "⋮" main
   menu are hidden via CSS (`theme.inject_css`) — this navbar replaces
   them, so they're just redundant chrome — but the header *element*
   itself stays (transparent) rather than being hidden outright, since it
@@ -139,6 +142,8 @@ spot just shows no logo, never a broken-image icon.
 | `get_performance(basket_id)` | `{"method": str \| None, "points": list[{"date": str, "percent_change": float \| None}]}` |
 | `get_tvl_usd_defillama()` | `float \| None` — **absent on `glider`**, present on `reserve` and `quantamm` |
 | `discover_baskets()` | `list[{"basket_id": str, "name": str, "tvl_usd": float \| None, "chain": str \| None}]` — see Basket discovery below |
+| `basket_platform_url(basket_id)` | `str \| None` — this basket's page on the platform's own site; `None` on an unparseable basket_id |
+| `basket_explorer_url(basket_id)` | `str \| None` — block explorer page for the basket's contract address; **always `None` on `glider`** (a strategy_id isn't an address) |
 
 Each adapter module also exports:
 
