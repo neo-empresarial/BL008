@@ -248,9 +248,21 @@ def inject_css() -> None:
             font-size: 0.75rem;
             font-weight: 600;
         }}
+        .badge a {{
+            /* Keeps the pill's white-on-accent look — an accent-colored
+            link here would fight its own background. */
+            color: inherit;
+            text-decoration: none;
+        }}
         .basket-id {{
             font-family: {MONO_FONT_FAMILY};
             color: {TEXT_MUTED};
+        }}
+        .basket-id a {{
+            /* Same treatment as .asset-address a below — accent color is
+            the page's one "this is a link" signal. */
+            color: {ACCENT};
+            text-decoration: none;
         }}
         .asset-address {{
             font-family: {MONO_FONT_FAMILY};
@@ -632,19 +644,43 @@ def render_footer() -> None:
     )
 
 
-def render_header(title: str, platform_name: str, basket_id: str) -> None:
+def render_header(
+    title: str,
+    platform_name: str,
+    basket_id: str,
+    platform_url: str | None = None,
+    explorer_url: str | None = None,
+) -> None:
     """NEO/Balancer logos (small, left-aligned — see `_logos_html`; skipped
     if neither file is present) above the compact header: product name,
-    platform badge, basket id."""
+    platform badge, basket id. The badge links to this basket's own page on
+    the platform's site (`platform_url`, e.g. adapters/reserve.py's
+    `basket_platform_url`) and the basket id links to a block explorer
+    (`explorer_url`, e.g. `basket_explorer_url`) — either link is omitted,
+    rendering plain text, when its adapter call returned None (a Glider
+    strategy_id has no explorer page; a malformed manual basket_id has
+    neither)."""
     logos_html = _logos_html(height_px=40, justify="flex-start", margin_bottom_rem=0.75)
+    badge_inner = platform_name
+    if platform_url:
+        badge_inner = (
+            f'<a href="{platform_url}" target="_blank" rel="noopener noreferrer">'
+            f"{platform_name}</a>"
+        )
+    basket_id_inner = basket_id
+    if explorer_url:
+        basket_id_inner = (
+            f'<a href="{explorer_url}" target="_blank" rel="noopener noreferrer">'
+            f"{basket_id}</a>"
+        )
     st.markdown(
         f"""
         {logos_html}
         <div class="console-header">
             <div class="console-title">{title}</div>
             <div class="console-meta">
-                <span class="badge">{platform_name}</span>
-                <span class="basket-id">{basket_id}</span>
+                <span class="badge">{badge_inner}</span>
+                <span class="basket-id">{basket_id_inner}</span>
             </div>
         </div>
         """,
