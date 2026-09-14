@@ -9,6 +9,11 @@ adapters/quantamm.py — all return exactly these shapes):
     "weights_after": list[{"asset","weight_pct"}] | None}]
 - get_performance(basket_id) -> {"method": str, "points": [{"date", "percent_change"}]}
 - discover_baskets() -> list[{"basket_id", "name", "tvl_usd", "chain"}]
+- basket_platform_url(basket_id) -> str | None — this basket's page on the
+    platform's own site
+- basket_explorer_url(basket_id) -> str | None — block explorer page for the
+    basket's own contract address (None where basket_id isn't an address,
+    e.g. Glider)
 
 No function here uses Streamlit — caching is the caller's responsibility (see
 app.py, `st.cache_data`).
@@ -582,3 +587,29 @@ def get_tvl_usd_defillama() -> float | None:
         return _to_float(response.json())
     except (requests.RequestException, ValueError):
         return None
+
+
+def basket_platform_url(basket_id: str) -> str | None:
+    """Link to this DTF's own page on Reserve's app — confirmed live as
+    `app.reserve.org/{chain}/index-dtf/{address}/overview`, where {chain}
+    is the same DefiLlama-style slug as DEFILLAMA_CHAIN_PREFIX (Reserve's
+    own app routing uses "ethereum", not the "mainnet" key basket_id
+    carries). None on an unparseable basket_id or unsupported chain."""
+    try:
+        chain_key, address = _parse_basket_id(basket_id)
+    except ReserveAPIError:
+        return None
+    prefix = DEFILLAMA_CHAIN_PREFIX.get(chain_key)
+    return f"https://app.reserve.org/{prefix}/index-dtf/{address}/overview" if prefix else None
+
+
+def basket_explorer_url(basket_id: str) -> str | None:
+    """Block explorer link for the DTF token contract itself — same
+    "<chain>:<address>" shape as any other price_ref, so this just reuses
+    `pricing.price_ref_to_explorer_url`."""
+    try:
+        chain_key, address = _parse_basket_id(basket_id)
+    except ReserveAPIError:
+        return None
+    prefix = DEFILLAMA_CHAIN_PREFIX.get(chain_key)
+    return pricing.price_ref_to_explorer_url(f"{prefix}:{address}") if prefix else None
