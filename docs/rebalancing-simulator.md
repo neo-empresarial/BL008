@@ -46,8 +46,11 @@ has a browser-style tab strip for its weight scenarios (see below).
   and a compact multi-select, across all three platforms' discovered
   baskets, to pick strategies for the comparison overlay (`<Platform> /
   <label>` options) — see Basket discovery below.
-- **Header** — NEO/Balancer logos (small, when present) above a compact
-  console header (platform badge, basket id).
+- **Header** — NEO/Balancer logos (small, when present, each linking out
+  to that project's site) above a compact console header: title ("Pool
+  Settings"), platform badge, basket id. Streamlit's own header/toolbar
+  (Deploy button, "⋮" menu) is hidden via CSS (`theme.inject_css`) — this
+  navbar replaces it, so the default one was just redundant chrome.
 - **Allocation** — full-width section: methodology expander, then a
   hand-rolled tab strip (one button per weight scenario plus a "✕", and a
   trailing ＋), and below it only the *active* scenario's editor — reset
@@ -113,14 +116,15 @@ variant) is the browser-tab favicon via `theme.page_icon()`, passed to
 `st.set_page_config(page_icon=...)` — `None` (Streamlit's own default
 favicon) if the file's missing. `granite-1.jpg` is still staged but
 unused — reserved for a follow-up (per-chart granite backgrounds).
-`public/balancer-logo.png` (the Balancer mark, white variant — cropped to
-its visible content by `theme._logo_img_tag`, see below) is shipped;
-`public/neo-logo.png` is **not** (no source to port it from) — add it
-locally to also brand the login screen and the console header with NEO's
-mark alongside Balancer's (see
+`public/balancer-logo.png` and `public/neo-logo.png` (both cropped to
+their visible content by `theme._logo_img_tag`, see below) brand the login
+screen and the header navbar side by side (see
 `theme.render_login_logos()`/`theme.render_header()` and "Login gate"
-under Setup below); the app runs fine without either, both spots just
-show no logos.
+under Setup below). Each links out to that project's own site
+(`theme.LOGO_LINKS`) — Balancer's to balancer.fi, NEO's to
+neo.certi.org.br — opening in a new tab. The app runs fine with either
+file missing (e.g. a fork without rights to redistribute one mark); that
+spot just shows no logo, never a broken-image icon.
 
 ### Adapter interface (implemented identically by all three adapters)
 
