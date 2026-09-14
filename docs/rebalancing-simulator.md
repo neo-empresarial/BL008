@@ -46,11 +46,15 @@ has a browser-style tab strip for its weight scenarios (see below).
   and a compact multi-select, across all three platforms' discovered
   baskets, to pick strategies for the comparison overlay (`<Platform> /
   <label>` options) — see Basket discovery below.
-- **Header** — NEO/Balancer logos (small, when present, each linking out
+- **Header** — NEO/Balancer logos (40px, when present, each linking out
   to that project's site) above a compact console header: title ("Pool
-  Settings"), platform badge, basket id. Streamlit's own header/toolbar
-  (Deploy button, "⋮" menu) is hidden via CSS (`theme.inject_css`) — this
-  navbar replaces it, so the default one was just redundant chrome.
+  Settings", sized to match every other section's `st.subheader`),
+  platform badge, basket id. Streamlit's own Deploy button and "⋮" main
+  menu are hidden via CSS (`theme.inject_css`) — this navbar replaces
+  them, so they're just redundant chrome — but the header *element*
+  itself stays (transparent) rather than being hidden outright, since it
+  also hosts `stExpandSidebarButton`, the only control that brings a
+  collapsed sidebar back.
 - **Allocation** — full-width section: methodology expander, then a
   hand-rolled tab strip (one button per weight scenario plus a "✕", and a
   trailing ＋), and below it only the *active* scenario's editor — reset
@@ -574,7 +578,9 @@ places. A successful login is remembered only in that browser tab's
 again; there's no "remember me," multi-user accounts, or lockout after
 failed attempts (single shared credential, single unauthenticated
 attempt-count — acceptable for this MVP's threat model, not a general
-auth system). `theme.render_login_logos()` shows the NEO and Balancer
+auth system). A `14vh` spacer pushes the form down from the very top of
+the page so it reads as roughly centered in the viewport, not pinned to
+the header. `theme.render_login_logos()` shows the NEO and Balancer
 logos above the form, and `theme.render_header()` shows the same two
 logos (smaller, left-aligned) above the console header on every page once
 logged in — both read from `public/neo-logo.png` / `public/balancer-logo.png`
