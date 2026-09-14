@@ -136,12 +136,14 @@ def apply_chart_theme(fig):
 
 
 def inject_css() -> None:
-    """Injects app-level CSS: readable sans-serif typography, extra top
-    padding so the header isn't clipped under Streamlit's toolbar, rounded
-    card-like chart/table surfaces (with `overflow: hidden` so the rounded
-    corners actually clip the chart's own background), address/link
-    styling, the page-wide grain texture (see `_noise_background_css`), and
-    the footer (see `render_footer`) — on top of the base theme from
+    """Injects app-level CSS: readable sans-serif typography, Streamlit's
+    own header/toolbar hidden (this app has its own logo navbar — see
+    `render_header`/`render_login_logos` — so Streamlit's Deploy/menu bar
+    is just redundant chrome, not a functional loss), rounded card-like
+    chart/table surfaces (with `overflow: hidden` so the rounded corners
+    actually clip the chart's own background), address/link styling, the
+    page-wide grain texture (see `_noise_background_css`), and the footer
+    (see `render_footer`) — on top of the base theme from
     `.streamlit/config.toml`. Call once, right after `st.set_page_config`."""
     st.markdown(
         f"""
@@ -150,8 +152,14 @@ def inject_css() -> None:
             font-family: {FONT_FAMILY};
         }}
         {_noise_background_css()}
+        [data-testid="stHeader"] {{
+            display: none;
+        }}
         .block-container {{
-            padding-top: 3rem;
+            /* Streamlit's header is hidden above, not just shortened, so
+            this only needs normal breathing room — not clearance for a
+            toolbar that's no longer there. */
+            padding-top: 1.5rem;
             /* No bottom padding: the footer (render_footer, always the
             last section) provides its own via `.app-footer`'s padding.
             Leaving Streamlit's default padding here left a sliver below
@@ -486,10 +494,20 @@ FOOTER_LINK_SECTIONS: list[dict[str, Any]] = [
 ]
 
 
+# Each logo links out to that project's own site — filename -> href, used
+# by `_logo_img_tag` to wrap the <img> in an <a> when a mapping exists.
+LOGO_LINKS: dict[str, str] = {
+    "balancer-logo.png": "https://balancer.fi",
+    "neo-logo.png": "https://neo.certi.org.br",
+}
+
+
 def _logo_img_tag(path: Path, height_px: int) -> str:
     """One base64-embedded <img> tag for a logo file, cropped to its
     visible (non-transparent) content and fixed to `height_px` with
-    `width: auto`.
+    `width: auto`. Wrapped in a link to `LOGO_LINKS[path.name]` when that
+    file has one, opening in a new tab — a logo with no mapping (e.g. a
+    future third partner) still renders, just unlinked.
 
     Two problems, two fixes, both needed — matching just one still left
     the logos looking mismatched:
@@ -515,10 +533,14 @@ def _logo_img_tag(path: Path, height_px: int) -> str:
         buf = io.BytesIO()
         cropped.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return (
+    img = (
         f'<img src="data:image/png;base64,{b64}" alt="{path.stem}" '
         f'style="height:{height_px}px;width:auto;object-fit:contain;" />'
     )
+    href = LOGO_LINKS.get(path.name)
+    if not href:
+        return img
+    return f'<a href="{href}" target="_blank" rel="noopener noreferrer">{img}</a>'
 
 
 def _logos_html(height_px: int, justify: str, margin_bottom_rem: float) -> str:
