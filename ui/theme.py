@@ -225,8 +225,11 @@ def inject_css() -> None:
             border-bottom: 1px solid {BORDER};
         }}
         .console-title {{
-            font-size: 1.25rem;
-            font-weight: 700;
+            /* Matches Streamlit's own st.subheader (h3) sizing, e.g.
+            "Allocation"/"Performance" below — same visual weight as every
+            other section title on the page, not a one-off larger title. */
+            font-size: 1.75rem;
+            font-weight: 600;
             color: {TEXT};
         }}
         .console-meta {{
@@ -633,7 +636,7 @@ def render_header(title: str, platform_name: str, basket_id: str) -> None:
     """NEO/Balancer logos (small, left-aligned — see `_logos_html`; skipped
     if neither file is present) above the compact header: product name,
     platform badge, basket id."""
-    logos_html = _logos_html(height_px=28, justify="flex-start", margin_bottom_rem=0.5)
+    logos_html = _logos_html(height_px=40, justify="flex-start", margin_bottom_rem=0.75)
     st.markdown(
         f"""
         {logos_html}

@@ -626,6 +626,12 @@ def require_login() -> None:
     expected_username = os.environ.get("APP_USERNAME", "").strip()
     expected_password = os.environ.get("APP_PASSWORD", "")
 
+    # Pushes the form down from the very top of the page so it reads as
+    # vertically centered rather than pinned to the header — a fixed
+    # offset, not true flex-centering, since the page's height varies with
+    # the viewport and Streamlit doesn't give this view its own container.
+    st.markdown('<div style="height:14vh;"></div>', unsafe_allow_html=True)
+
     _, center_col, _ = st.columns([1, 1.4, 1])
     with center_col:
         theme.render_login_logos()
