@@ -137,13 +137,16 @@ def apply_chart_theme(fig):
 
 def inject_css() -> None:
     """Injects app-level CSS: readable sans-serif typography, Streamlit's
-    own header/toolbar hidden (this app has its own logo navbar — see
-    `render_header`/`render_login_logos` — so Streamlit's Deploy/menu bar
-    is just redundant chrome, not a functional loss), rounded card-like
-    chart/table surfaces (with `overflow: hidden` so the rounded corners
-    actually clip the chart's own background), address/link styling, the
-    page-wide grain texture (see `_noise_background_css`), and the footer
-    (see `render_footer`) — on top of the base theme from
+    own Deploy button and "⋮" main menu hidden (this app has its own logo
+    navbar — see `render_header`/`render_login_logos` — so they're just
+    redundant chrome, not a functional loss; the header *element* itself
+    stays, just transparent, because it also hosts `stExpandSidebarButton`
+    — the only way to bring a collapsed sidebar back, so it can never be
+    display:none'd wholesale), rounded card-like chart/table surfaces
+    (with `overflow: hidden` so the rounded corners actually clip the
+    chart's own background), address/link styling, the page-wide grain
+    texture (see `_noise_background_css`), and the footer (see
+    `render_footer`) — on top of the base theme from
     `.streamlit/config.toml`. Call once, right after `st.set_page_config`."""
     st.markdown(
         f"""
@@ -153,12 +156,16 @@ def inject_css() -> None:
         }}
         {_noise_background_css()}
         [data-testid="stHeader"] {{
+            background: transparent;
+            height: auto;
+        }}
+        [data-testid="stAppDeployButton"], [data-testid="stMainMenu"] {{
             display: none;
         }}
         .block-container {{
-            /* Streamlit's header is hidden above, not just shortened, so
-            this only needs normal breathing room — not clearance for a
-            toolbar that's no longer there. */
+            /* Streamlit's header is transparent/chrome-free above, not
+            hidden outright (see stHeader), so this only needs normal
+            breathing room — not clearance for a solid toolbar bar. */
             padding-top: 1.5rem;
             /* No bottom padding: the footer (render_footer, always the
             last section) provides its own via `.app-footer`'s padding.
